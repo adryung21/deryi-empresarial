@@ -1,0 +1,137 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null && request.auth.token.email != null;
+    }
+
+    function isSupport() {
+      return signedIn() && request.auth.token.email in ["adrian90.2y@gmail.com"];
+    }
+
+    function companyPath(companyId) {
+      return /databases/$(database)/documents/companies/$(companyId);
+    }
+
+    function userPath(companyId, uid) {
+      return /databases/$(database)/documents/companies/$(companyId)/users/$(uid);
+    }
+
+    function allowedPath(companyId, email) {
+      return /databases/$(database)/documents/companies/$(companyId)/allowedEmails/$(email);
+    }
+
+    function indexPath(uid) {
+      return /databases/$(database)/documents/userCompanyIndex/$(uid);
+    }
+
+    function isMember(companyId) {
+      return signedIn()
+        && exists(userPath(companyId, request.auth.uid))
+        && get(userPath(companyId, request.auth.uid)).data.active == true;
+    }
+
+    function role(companyId) {
+      return isMember(companyId) ? get(userPath(companyId, request.auth.uid)).data.role : "";
+    }
+
+    function isCompanyAdmin(companyId) {
+      return isSupport() || role(companyId) in ["owner", "admin"];
+    }
+
+    function isAllowedEmail(companyId) {
+      return signedIn()
+        && exists(allowedPath(companyId, request.auth.token.email))
+        && get(allowedPath(companyId, request.auth.token.email)).data.active == true;
+    }
+
+    function isCompanyCreator(companyId) {
+      return signedIn()
+        && getAfter(companyPath(companyId)).data.ownerUid == request.auth.uid
+        && getAfter(companyPath(companyId)).data.ownerEmail == request.auth.token.email;
+    }
+
+    match /userCompanyIndex/{uid} {
+      allow get: if isSupport() || (signedIn() && request.auth.uid == uid);
+      allow list: if isSupport();
+      allow create: if signedIn() && (
+        request.auth.uid == uid ||
+        isCompanyAdmin(request.resource.data.companyId)
+      );
+      allow update: if isSupport()
+        || (signedIn() && request.auth.uid == uid && request.resource.data.companyId == resource.data.companyId)
+        || isCompanyAdmin(resource.data.companyId)
+        || isCompanyAdmin(request.resource.data.companyId);
+      allow delete: if isSupport() || isCompanyAdmin(resource.data.companyId);
+    }
+
+    match /companies/{companyId} {
+      allow create: if signedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerEmail == request.auth.token.email;
+      allow get: if isSupport() || isMember(companyId) || isAllowedEmail(companyId);
+      allow list: if isSupport();
+      allow update: if isSupport() || isCompanyAdmin(companyId);
+      allow delete: if isSupport();
+
+      match /allowedEmails/{emailId} {
+        allow get: if isSupport() || isCompanyAdmin(companyId) || (signedIn() && request.auth.token.email == emailId);
+        allow list: if isSupport() || isCompanyAdmin(companyId);
+        allow create: if isSupport()
+          || isCompanyAdmin(companyId)
+          || (signedIn() && request.auth.token.email == emailId && request.resource.data.uid == request.auth.uid && request.resource.data.role == "owner" && isCompanyCreator(companyId));
+        allow update: if isSupport()
+          || isCompanyAdmin(companyId)
+          || (signedIn() && request.auth.token.email == emailId && request.resource.data.uid == request.auth.uid && isAllowedEmail(companyId));
+        allow delete: if isSupport() || isCompanyAdmin(companyId);
+      }
+
+      match /users/{userId} {
+        allow get: if isSupport() || isCompanyAdmin(companyId) || (signedIn() && request.auth.uid == userId && (isMember(companyId) || isAllowedEmail(companyId)));
+        allow list: if isSupport() || isCompanyAdmin(companyId);
+        allow create: if isSupport()
+          || isCompanyAdmin(companyId)
+          || (signedIn() && request.auth.uid == userId && request.resource.data.email == request.auth.token.email && (isAllowedEmail(companyId) || isCompanyCreator(companyId)));
+        allow update: if isSupport()
+          || isCompanyAdmin(companyId)
+          || (signedIn() && request.auth.uid == userId && isMember(companyId) && request.resource.data.role == resource.data.role && request.resource.data.active == resource.data.active && request.resource.data.email == resource.data.email);
+        allow delete: if isSupport() || isCompanyAdmin(companyId);
+      }
+
+      match /inventory/{productId} {
+        allow read: if isSupport() || isMember(companyId);
+        allow create, update, delete: if isCompanyAdmin(companyId);
+      }
+
+      match /appMeta/{docId} {
+        allow read: if isSupport() || isMember(companyId);
+        allow create: if isSupport() || isCompanyAdmin(companyId) || isCompanyCreator(companyId);
+        allow update, delete: if isSupport() || isCompanyAdmin(companyId);
+      }
+
+      match /counts/{countId} {
+        allow read: if isSupport() || isMember(companyId);
+        allow create, update: if isSupport() || isMember(companyId);
+        allow delete: if isSupport() || isCompanyAdmin(companyId);
+      }
+
+      match /labLocks/{lockId} {
+        allow read: if isSupport() || isMember(companyId);
+        allow create, update: if isSupport() || isMember(companyId);
+        allow delete: if isSupport() || isCompanyAdmin(companyId);
+      }
+
+      match /labCompletions/{labId} {
+        allow read: if isSupport() || isMember(companyId);
+        allow create, update: if isSupport() || isMember(companyId);
+        allow delete: if isSupport() || isCompanyAdmin(companyId);
+      }
+
+      match /history/{historyId} {
+        allow read: if isSupport() || isCompanyAdmin(companyId);
+        allow create: if isSupport() || isMember(companyId);
+        allow update, delete: if isSupport() || isCompanyAdmin(companyId);
+      }
+    }
+  }
+}
