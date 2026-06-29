@@ -36,7 +36,7 @@ const getValue = (id, fallback = '') => {
 };
 const nf = new Intl.NumberFormat('es-EC', { maximumFractionDigits: 2 });
 const dtf = new Intl.DateTimeFormat('es-EC', { dateStyle: 'short', timeStyle: 'short' });
-const appVersion = 'Multiempresa v1.2 - 2026-06-29';
+const appVersion = 'Multiempresa v1.3 - 2026-06-29';
 
 let app, auth, db;
 let unsubscribers = [];
@@ -696,6 +696,10 @@ function setVersionLabels() {
 function applyRoleUI() {
   const support = isSupport();
   const admin = isAdmin() && !support;
+
+  document.body.classList.toggle('support-user', support);
+  document.body.classList.toggle('admin-user', admin);
+  document.body.classList.toggle('inventory-user', !admin && !support);
 
   // Botones del menú: se remueven visualmente para inventariadores.
   // No dependemos solo de CSS, porque en móviles/caché puede quedar una vista vieja visible.
@@ -2058,7 +2062,30 @@ function authReady() {
 }
 
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+  window.addEventListener('load', async () => {
+    try {
+      const registration = await navigator.serviceWorker.register('./sw.js?v=1.3');
+      registration.update?.();
+      if (registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+      registration.addEventListener('updatefound', () => {
+        const worker = registration.installing;
+        if (!worker) return;
+        worker.addEventListener('statechange', () => {
+          if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+            worker.postMessage({ type: 'SKIP_WAITING' });
+          }
+        });
+      });
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!sessionStorage.getItem('swReloadedV13')) {
+          sessionStorage.setItem('swReloadedV13', '1');
+          window.location.reload();
+        }
+      });
+    } catch (err) {
+      console.warn('No se pudo registrar service worker', err);
+    }
+  });
 }
 
 attachEvents();

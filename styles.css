@@ -679,3 +679,21 @@ input[type="file"] { padding: 10px; }
   align-items: center;
   justify-content: center;
 }
+
+/* v1.3 - protección visual por rol */
+body.inventory-user .admin-only,
+body:not(.admin-user):not(.support-user) .admin-only {
+  display: none !important;
+}
+body.support-user .company-only {
+  display: none !important;
+}
+body.admin-user .admin-only {
+  display: block;
+}
+button.admin-only[hidden],
+button.company-only[hidden],
+button.support-only[hidden],
+.hidden {
+  display: none !important;
+}

@@ -1,9 +1,9 @@
-const CACHE_NAME = 'deryi-empresarial-multiempresa-v1-2';
+const CACHE_NAME = 'deryi-empresarial-multiempresa-v1-3';
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css',
-  './app.js',
+  './styles.css?v=1.3',
+  './app.js?v=1.3',
   './firebase-config.js',
   './manifest.json',
   './favicon.png',
@@ -13,7 +13,7 @@ const APP_SHELL = [
 ];
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(APP_SHELL)));
+  event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(APP_SHELL)).catch(() => null));
   self.skipWaiting();
 });
 
@@ -24,19 +24,40 @@ self.addEventListener('activate', event => {
   self.clients.claim();
 });
 
+self.addEventListener('message', event => {
+  if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
+});
+
+function shouldUseNetworkFirst(request) {
+  const url = new URL(request.url);
+  if (request.mode === 'navigate') return true;
+  return ['/', '/index.html', '/app.js', '/styles.css', '/sw.js'].some(path => url.pathname.endsWith(path));
+}
+
 self.addEventListener('fetch', event => {
   const request = event.request;
   if (request.method !== 'GET') return;
-  event.respondWith(
-    caches.match(request).then(cached => {
-      if (cached) return cached;
-      return fetch(request).then(response => {
+
+  if (shouldUseNetworkFirst(request)) {
+    event.respondWith(
+      fetch(request).then(response => {
         if (response && response.ok && new URL(request.url).origin === location.origin) {
           const copy = response.clone();
           caches.open(CACHE_NAME).then(cache => cache.put(request, copy));
         }
         return response;
-      }).catch(() => caches.match('./index.html'));
-    })
+      }).catch(() => caches.match(request).then(cached => cached || caches.match('./index.html')))
+    );
+    return;
+  }
+
+  event.respondWith(
+    caches.match(request).then(cached => cached || fetch(request).then(response => {
+      if (response && response.ok && new URL(request.url).origin === location.origin) {
+        const copy = response.clone();
+        caches.open(CACHE_NAME).then(cache => cache.put(request, copy));
+      }
+      return response;
+    }).catch(() => caches.match('./index.html')))
   );
 });
