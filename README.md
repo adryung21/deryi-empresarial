@@ -50,15 +50,8 @@ userCompanyIndex/{uid}
 Ese índice permite que la app sepa a qué empresa pertenece el usuario después de iniciar sesión.
 
 
-## Multiempresa v1.2 - 2026-06-29
+## Multiempresa v1.1 - 2026-06-29
 
 - Invitación de usuarios con código de empresa y enlace a Crear acceso.
 - Usuarios inventariadores no pueden abrir Carga de inventario ni Usuarios.
 - Versión visible bajo Cerrar sesión en el menú lateral.
-
-
-## Versión v1.2 - 2026-06-29
-
-- Versión visible en inicio de sesión y debajo de Cerrar sesión.
-- Ocultamiento reforzado de Carga de inventario y Usuarios para inventariadores.
-- Actualización de caché del service worker.

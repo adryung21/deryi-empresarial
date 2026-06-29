@@ -1,4 +1,4 @@
-const CACHE_NAME = 'deryi-empresarial-multiempresa-v1-2';
+const CACHE_NAME = 'deryi-empresarial-multiempresa-v1-1';
 const APP_SHELL = [
   './',
   './index.html',
