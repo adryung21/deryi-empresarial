@@ -36,7 +36,7 @@ const getValue = (id, fallback = '') => {
 };
 const nf = new Intl.NumberFormat('es-EC', { maximumFractionDigits: 2 });
 const dtf = new Intl.DateTimeFormat('es-EC', { dateStyle: 'short', timeStyle: 'short' });
-const appVersion = 'Multiempresa v1.1 - 2026-06-29';
+const appVersion = 'Multiempresa v1.2 - 2026-06-29';
 
 let app, auth, db;
 let unsubscribers = [];
@@ -677,28 +677,42 @@ function canAccessTab(tab) {
   return ['vista', 'generacion'].includes(tab);
 }
 
+function setElementVisible(el, visible) {
+  if (!el) return;
+  el.classList.toggle('hidden', !visible);
+  el.hidden = !visible;
+  el.style.display = visible ? '' : 'none';
+  el.setAttribute('aria-hidden', visible ? 'false' : 'true');
+  if (!visible) el.classList.remove('active');
+}
+
+function setVersionLabels() {
+  ['sideAppVersion', 'authAppVersion'].forEach(id => {
+    const el = $(id);
+    if (el) el.textContent = appVersion;
+  });
+}
+
 function applyRoleUI() {
   const support = isSupport();
   const admin = isAdmin() && !support;
-  document.querySelectorAll('.admin-only, .admin-panel').forEach(el => {
-    el.classList.toggle('hidden', !admin);
-    el.setAttribute('aria-hidden', admin ? 'false' : 'true');
-  });
-  document.querySelectorAll('.support-only').forEach(el => {
-    el.classList.toggle('hidden', !support);
-    el.setAttribute('aria-hidden', support ? 'false' : 'true');
-  });
-  document.querySelectorAll('.company-only').forEach(el => {
-    el.classList.toggle('hidden', support);
-    el.setAttribute('aria-hidden', support ? 'true' : 'false');
-  });
+
+  // Botones del menú: se remueven visualmente para inventariadores.
+  // No dependemos solo de CSS, porque en móviles/caché puede quedar una vista vieja visible.
+  document.querySelectorAll('.tab-btn[data-tab="carga"], .tab-btn[data-tab="usuarios"]').forEach(el => setElementVisible(el, admin));
+  document.querySelectorAll('.tab-btn[data-tab="vista"], .tab-btn[data-tab="generacion"]').forEach(el => setElementVisible(el, !support));
+  document.querySelectorAll('.tab-btn[data-tab="soporte"]').forEach(el => setElementVisible(el, support));
+
+  document.querySelectorAll('.admin-panel').forEach(el => setElementVisible(el, admin));
+  document.querySelectorAll('.support-only:not(.tab-btn)').forEach(el => setElementVisible(el, support));
+  document.querySelectorAll('.company-only:not(.tab-btn)').forEach(el => setElementVisible(el, !support));
+
   $('sideUserName').textContent = state.profile?.name || '-';
   $('sideUserEmail').textContent = state.user?.email || '-';
   $('sideUserRole').textContent = support ? 'Soporte de plataforma' : roleLabel(state.profile?.role);
   const companyEl = $('sideCompanyName');
   if (companyEl) companyEl.textContent = support ? 'Panel de soporte' : (state.company?.name || 'Sin empresa');
-  const versionEl = $('sideAppVersion');
-  if (versionEl) versionEl.textContent = appVersion;
+  setVersionLabels();
   if (support) {
     switchTab('soporte');
     return;
@@ -1875,6 +1889,7 @@ function stopUserPresence() {
 }
 
 function attachEvents() {
+  setVersionLabels();
   document.querySelectorAll('.auth-tab').forEach(btn => btn.addEventListener('click', () => switchAuthTab(btn.dataset.authTab)));
   $('loginForm').addEventListener('submit', async e => {
     e.preventDefault();
@@ -2029,6 +2044,7 @@ function authReady() {
       stopUserPresence();
       $('authPage').classList.remove('hidden');
       $('appPage').classList.add('hidden');
+      setVersionLabels();
       return;
     }
     try {
