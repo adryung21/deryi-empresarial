@@ -646,3 +646,26 @@ input[type="file"] { padding: 10px; }
 @media (max-width: 520px) {
   .auth-tabs { grid-template-columns: 1fr 1fr; }
 }
+
+.side-version {
+  margin-top: 2px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(255,255,255,.08);
+  color: rgba(255,255,255,.72);
+  font-size: 11px;
+  line-height: 1.25;
+  text-align: center;
+}
+.invite-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.invite-actions .btn {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}

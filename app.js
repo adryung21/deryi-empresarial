@@ -36,7 +36,7 @@ const getValue = (id, fallback = '') => {
 };
 const nf = new Intl.NumberFormat('es-EC', { maximumFractionDigits: 2 });
 const dtf = new Intl.DateTimeFormat('es-EC', { dateStyle: 'short', timeStyle: 'short' });
-const appVersion = 'Multiempresa v1.0';
+const appVersion = 'Multiempresa v1.1 - 2026-06-29';
 
 let app, auth, db;
 let unsubscribers = [];
@@ -353,6 +353,81 @@ async function sendLoginPasswordReset(email) {
   await sendPasswordResetEmail(auth, lower);
 }
 
+function getAppBaseUrl() {
+  const base = `${location.origin}${location.pathname}`;
+  return base.replace(/[#?].*$/, '');
+}
+
+function createAccessUrl(email = '') {
+  const url = new URL(getAppBaseUrl());
+  url.searchParams.set('auth', 'register');
+  if (state.companyId) url.searchParams.set('company', state.companyId);
+  if (email) url.searchParams.set('email', normalizeText(email).toLowerCase());
+  return url.toString();
+}
+
+function invitationEmailText(user) {
+  const name = normalizeText(user?.name) || 'usuario';
+  const email = normalizeText(user?.email).toLowerCase();
+  const role = roleLabel(user?.role || 'inventariador');
+  const companyName = state.company?.name || 'tu empresa';
+  const code = state.companyId || '';
+  const link = createAccessUrl(email);
+  return `Hola ${name},
+
+Te autorizaron para usar ${APP_NAME} en la empresa ${companyName}.
+
+Código de empresa: ${code}
+Rol asignado: ${role}
+Correo autorizado: ${email}
+
+Para crear tu acceso, abre este enlace:
+${link}
+
+En la pantalla Crear acceso, usa el código de empresa y tu correo autorizado. Luego crea tu contraseña.
+
+Este mensaje fue generado desde ${APP_NAME}.`;
+}
+
+function invitationMailto(user) {
+  const email = normalizeText(user?.email).toLowerCase();
+  const subject = `Acceso a ${APP_NAME} - ${state.company?.name || 'Empresa'}`;
+  const body = invitationEmailText(user);
+  return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return true;
+  }
+  const area = document.createElement('textarea');
+  area.value = text;
+  area.setAttribute('readonly', '');
+  area.style.position = 'fixed';
+  area.style.left = '-9999px';
+  document.body.appendChild(area);
+  area.select();
+  const ok = document.execCommand('copy');
+  area.remove();
+  return ok;
+}
+
+function applyAuthQueryParams() {
+  try {
+    const params = new URLSearchParams(location.search);
+    if (params.get('auth') === 'register') {
+      switchAuthTab('register');
+      const company = params.get('company') || '';
+      const email = params.get('email') || '';
+      if ($('registerCompanyCode') && company) $('registerCompanyCode').value = company;
+      if ($('registerEmail') && email) $('registerEmail').value = email;
+    }
+  } catch (err) {
+    console.warn('No se pudieron aplicar parámetros de acceso', err);
+  }
+}
+
 async function createCompany(companyName, adminName, email, password) {
   const name = normalizeText(companyName);
   const ownerName = normalizeText(adminName);
@@ -594,24 +669,47 @@ async function ensureProfile(user) {
   return { ...existing, ...profile };
 }
 
+function canAccessTab(tab) {
+  const support = isSupport();
+  if (support) return tab === 'soporte';
+  if (tab === 'soporte') return false;
+  if (['carga', 'usuarios'].includes(tab)) return isAdmin();
+  return ['vista', 'generacion'].includes(tab);
+}
+
 function applyRoleUI() {
   const support = isSupport();
-  document.querySelectorAll('.admin-only, .admin-panel').forEach(el => el.classList.toggle('hidden', !isAdmin() || support));
-  document.querySelectorAll('.support-only').forEach(el => el.classList.toggle('hidden', !support));
-  document.querySelectorAll('.company-only').forEach(el => el.classList.toggle('hidden', support));
+  const admin = isAdmin() && !support;
+  document.querySelectorAll('.admin-only, .admin-panel').forEach(el => {
+    el.classList.toggle('hidden', !admin);
+    el.setAttribute('aria-hidden', admin ? 'false' : 'true');
+  });
+  document.querySelectorAll('.support-only').forEach(el => {
+    el.classList.toggle('hidden', !support);
+    el.setAttribute('aria-hidden', support ? 'false' : 'true');
+  });
+  document.querySelectorAll('.company-only').forEach(el => {
+    el.classList.toggle('hidden', support);
+    el.setAttribute('aria-hidden', support ? 'true' : 'false');
+  });
   $('sideUserName').textContent = state.profile?.name || '-';
   $('sideUserEmail').textContent = state.user?.email || '-';
   $('sideUserRole').textContent = support ? 'Soporte de plataforma' : roleLabel(state.profile?.role);
   const companyEl = $('sideCompanyName');
   if (companyEl) companyEl.textContent = support ? 'Panel de soporte' : (state.company?.name || 'Sin empresa');
+  const versionEl = $('sideAppVersion');
+  if (versionEl) versionEl.textContent = appVersion;
   if (support) {
     switchTab('soporte');
     return;
   }
-  if (!isAdmin() && $('tab-carga').classList.contains('active')) switchTab('vista');
+  const activePanel = document.querySelector('.panel.active');
+  const activeTab = activePanel ? activePanel.id.replace('tab-', '') : '';
+  if (!canAccessTab(activeTab)) switchTab(admin ? 'carga' : 'vista');
 }
 
 function switchTab(tab) {
+  if (!canAccessTab(tab)) tab = isSupport() ? 'soporte' : (isAdmin() ? 'carga' : 'vista');
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   const panel = $('tab-' + tab);
@@ -1089,6 +1187,7 @@ function renderUsers() {
       <div class="user-actions">
         <button class="btn" type="button" data-user-action="save">Guardar</button>
         <button class="btn secondary" type="button" data-user-action="history">Historial</button>
+        <button class="btn secondary" type="button" data-user-action="invite">Enviar acceso</button>
         <button class="btn secondary" type="button" data-user-action="reset">Restablecer contraseña</button>
         <button class="btn danger" type="button" data-user-action="delete" ${isMainAdmin ? 'disabled' : ''}>Borrar usuario</button>
       </div>
@@ -1139,19 +1238,49 @@ async function createAllowedUser() {
   const role = getValue('newUserRole', 'inventariador');
   const color = normalizeColor(getValue('newUserColor', '0'));
   if (!name || !email) return showMessage($('userMessage'), 'Ingresa nombre y correo.', 'warn');
+  const invite = { name, email, role, color };
+  const invitationUrl = createAccessUrl(email);
   await setDoc(companyDoc('allowedEmails', email), {
     name, email, role, color, active: true, companyId: state.companyId, companyName: state.company?.name || '',
+    invitationUrl,
+    invitedAt: serverTimestamp(),
+    invitedAtMs: Date.now(),
     createdByUid: state.user.uid,
     createdByEmail: state.user.email,
     createdAt: serverTimestamp(),
     createdAtMs: Date.now(),
     updatedAt: serverTimestamp(),
-    updatedAtMs: Date.now()
+    updatedAtMs: Date.now(),
+    appVersion
   }, { merge: true });
   $('newUserName').value = '';
   $('newUserEmail').value = '';
   $('newUserColor').value = String((color + 1) % 8);
-  showMessage($('userMessage'), `Usuario autorizado: ${email}. Código empresa: ${state.companyId}. Ya puede crear su contraseña desde “Crear acceso”.`, 'info');
+  const msg = $('userMessage');
+  showMessage(msg, `Usuario autorizado: ${email}. Código empresa: ${state.companyId}.`, 'info');
+  msg.innerHTML = `
+    <strong>Usuario autorizado:</strong> ${escapeHtml(email)}<br>
+    Código empresa: <strong>${escapeHtml(state.companyId)}</strong><br>
+    Enlace Crear acceso: <a href="${escapeHtml(invitationUrl)}" target="_blank" rel="noopener">abrir enlace</a>
+    <div class="invite-actions">
+      <a class="btn secondary" href="${escapeHtml(invitationMailto(invite))}">Enviar invitación por correo</a>
+      <button class="btn ghost" type="button" data-copy-invite="${escapeHtml(email)}">Copiar mensaje</button>
+    </div>
+    <div class="small">Por seguridad, la app abre tu correo con el mensaje listo. Para envío automático sin tocar “Enviar”, se necesitaría una función de servidor.</div>`;
+}
+
+async function copyInviteForEmail(email) {
+  const item = mergedUsers().find(u => String(u.email || u.id || '').toLowerCase() === String(email || '').toLowerCase()) || { email };
+  const text = invitationEmailText(item);
+  await copyTextToClipboard(text);
+  showMessage($('userMessage'), `Mensaje de invitación copiado para ${email}.`, 'info');
+}
+
+function sendUserInvite(card) {
+  const data = getUserCardData(card);
+  if (!data?.email) return;
+  location.href = invitationMailto(data);
+  showMessage($('userMessage'), `Se abrió el correo de invitación para ${data.email}. Revisa el mensaje y presiona Enviar.`, 'info');
 }
 
 function getUserCardData(card) {
@@ -1815,12 +1944,15 @@ function attachEvents() {
     if (labBtn) takeLab(labBtn.dataset.labOpen);
     const factorBtn = e.target.closest('[data-factor-edit]');
     if (factorBtn) openFactorModal(factorBtn.dataset.factorEdit);
+    const copyInvite = e.target.closest('[data-copy-invite]');
+    if (copyInvite) copyInviteForEmail(copyInvite.dataset.copyInvite).catch(err => showMessage($('userMessage'), 'No se pudo copiar: ' + err.message, 'danger'));
     const userAction = e.target.closest('[data-user-action]');
     if (userAction) {
       const action = userAction.dataset.userAction;
       const card = userAction.closest('.user-card');
       if (action === 'save') saveUserCard(card).catch(err => showMessage($('userMessage'), err.message, 'danger'));
       if (action === 'delete') deleteUserCard(card).catch(err => showMessage($('userMessage'), err.message, 'danger'));
+      if (action === 'invite') sendUserInvite(card);
       if (action === 'reset') resetUserPassword(card).catch(err => showMessage($('userMessage'), 'No se pudo enviar correo: ' + err.message, 'danger'));
       if (action === 'history') showUserHistory(card);
       if (action === 'close-history') $('userHistoryPanel')?.classList.add('hidden');
@@ -1914,4 +2046,5 @@ if ('serviceWorker' in navigator) {
 }
 
 attachEvents();
+applyAuthQueryParams();
 if (setupFirebase()) authReady();
