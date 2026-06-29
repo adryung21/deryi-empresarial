@@ -36,7 +36,7 @@ const getValue = (id, fallback = '') => {
 };
 const nf = new Intl.NumberFormat('es-EC', { maximumFractionDigits: 2 });
 const dtf = new Intl.DateTimeFormat('es-EC', { dateStyle: 'short', timeStyle: 'short' });
-const appVersion = 'Multiempresa v1.3 - 2026-06-29';
+const appVersion = 'Multiempresa v1.4 Usuario - 2026-06-29';
 
 let app, auth, db;
 let unsubscribers = [];
@@ -119,6 +119,34 @@ function productId(row) {
 
 function cleanCompanyCode(value) {
   return normalizeText(value).toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+function cleanUsername(value) {
+  return normalizeText(value)
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '')
+    .replace(/^[-_.]+|[-_.]+$/g, '')
+    .slice(0, 32);
+}
+
+function internalAuthEmail(companyId, username) {
+  const company = cleanCompanyCode(companyId).replace(/[^a-z0-9._-]/g, '').slice(0, 28) || 'empresa';
+  const user = cleanUsername(username).slice(0, 28) || 'usuario';
+  const local = `${company}.${user}`.replace(/\.+/g, '.').replace(/^\.+|\.+$/g, '').slice(0, 63);
+  return `${local}@deryi.local`;
+}
+
+function publicUserEmail(userLike) {
+  return normalizeText(userLike?.contactEmail || userLike?.email || '').toLowerCase();
+}
+
+function authEmailOfCurrentUser() {
+  return normalizeText(state.user?.email || '').toLowerCase();
+}
+
+function contactEmailOfCurrentUser() {
+  return normalizeText(state.profile?.contactEmail || state.profile?.email || state.user?.email || '').toLowerCase();
 }
 
 function makeCompanyId(companyName, email) {
@@ -335,22 +363,22 @@ function switchAuthTab(tab) {
   if (createCompanyForm) createCompanyForm.classList.toggle('hidden', tab !== 'company');
   const resetForm = $('resetForm');
   if (resetForm) resetForm.classList.toggle('hidden', tab !== 'reset');
-  if (tab === 'reset') {
-    const resetEmail = $('resetEmail');
-    const loginEmail = getValue('loginEmail').trim();
-    if (resetEmail && loginEmail && !resetEmail.value) resetEmail.value = loginEmail;
-  }
   clearMessage($('authMessage'));
 }
 
-async function login(email, password) {
-  await signInWithEmailAndPassword(auth, email, password);
+async function login(companyCode, username, password) {
+  const code = cleanCompanyCode(companyCode);
+  const user = cleanUsername(username);
+  if (!code || !user || !password) throw new Error('Ingresa código de empresa, usuario y contraseña.');
+  // Acceso técnico oculto: código "soporte" y correo real como usuario.
+  const authEmail = ['soporte', 'support'].includes(code) && String(username).includes('@')
+    ? normalizeText(username).toLowerCase()
+    : internalAuthEmail(code, user);
+  await signInWithEmailAndPassword(auth, authEmail, password);
 }
 
-async function sendLoginPasswordReset(email) {
-  const lower = normalizeText(email).toLowerCase();
-  if (!lower) throw new Error('Ingresa el correo registrado.');
-  await sendPasswordResetEmail(auth, lower);
+async function sendLoginPasswordReset() {
+  throw new Error('Con usuario/nickname, la recuperación simple la gestiona el administrador de la empresa. Pídele que te reenvíe el acceso o que cree un nuevo usuario si olvidaste tu contraseña.');
 }
 
 function getAppBaseUrl() {
@@ -358,39 +386,41 @@ function getAppBaseUrl() {
   return base.replace(/[#?].*$/, '');
 }
 
-function createAccessUrl(email = '') {
+function createAccessUrl(username = '') {
   const url = new URL(getAppBaseUrl());
   url.searchParams.set('auth', 'register');
   if (state.companyId) url.searchParams.set('company', state.companyId);
-  if (email) url.searchParams.set('email', normalizeText(email).toLowerCase());
+  if (username) url.searchParams.set('user', cleanUsername(username));
   return url.toString();
 }
 
 function invitationEmailText(user) {
   const name = normalizeText(user?.name) || 'usuario';
-  const email = normalizeText(user?.email).toLowerCase();
+  const username = cleanUsername(user?.username || user?.id || '');
+  const contactEmail = normalizeText(user?.contactEmail || user?.email).toLowerCase();
   const role = roleLabel(user?.role || 'inventariador');
   const companyName = state.company?.name || 'tu empresa';
   const code = state.companyId || '';
-  const link = createAccessUrl(email);
+  const link = createAccessUrl(username);
   return `Hola ${name},
 
 Te autorizaron para usar ${APP_NAME} en la empresa ${companyName}.
 
 Código de empresa: ${code}
+Usuario: ${username}
 Rol asignado: ${role}
-Correo autorizado: ${email}
+Correo de contacto: ${contactEmail || '-'}
 
 Para crear tu acceso, abre este enlace:
 ${link}
 
-En la pantalla Crear acceso, usa el código de empresa y tu correo autorizado. Luego crea tu contraseña.
+En la pantalla Crear acceso, usa el código de empresa y tu usuario/nickname. Luego crea tu contraseña.
 
 Este mensaje fue generado desde ${APP_NAME}.`;
 }
 
 function invitationMailto(user) {
-  const email = normalizeText(user?.email).toLowerCase();
+  const email = normalizeText(user?.contactEmail || user?.email).toLowerCase();
   const subject = `Acceso a ${APP_NAME} - ${state.company?.name || 'Empresa'}`;
   const body = invitationEmailText(user);
   return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
@@ -419,35 +449,42 @@ function applyAuthQueryParams() {
     if (params.get('auth') === 'register') {
       switchAuthTab('register');
       const company = params.get('company') || '';
-      const email = params.get('email') || '';
+      const user = params.get('user') || params.get('username') || '';
       if ($('registerCompanyCode') && company) $('registerCompanyCode').value = company;
-      if ($('registerEmail') && email) $('registerEmail').value = email;
+      if ($('registerUsername') && user) $('registerUsername').value = user;
     }
   } catch (err) {
     console.warn('No se pudieron aplicar parámetros de acceso', err);
   }
 }
 
-async function createCompany(companyName, adminName, email, password) {
+async function createCompany(companyName, adminName, adminUsername, contactEmail, password) {
   const name = normalizeText(companyName);
   const ownerName = normalizeText(adminName);
-  const lower = normalizeText(email).toLowerCase();
-  if (!name || !ownerName || !lower || !password) throw new Error('Completa nombre de empresa, administrador, correo y contraseña.');
+  const username = cleanUsername(adminUsername);
+  const contact = normalizeText(contactEmail).toLowerCase();
+  if (!name || !ownerName || !username || !contact || !password) throw new Error('Completa empresa, administrador, usuario, correo de contacto y contraseña.');
   if (password.length < 6) throw new Error('La contraseña debe tener mínimo 6 caracteres.');
+  const companyId = makeCompanyId(name, contact);
+  const authEmail = internalAuthEmail(companyId, username);
   pendingAuthSetup = true;
   try {
-    const cred = await createUserWithEmailAndPassword(auth, lower, password);
-    const companyId = makeCompanyId(name, lower);
+    const cred = await createUserWithEmailAndPassword(auth, authEmail, password);
     const now = Date.now();
     const profile = {
       uid: cred.user.uid,
       name: ownerName,
-      email: lower,
+      username,
+      email: contact,
+      contactEmail: contact,
+      authEmail,
       role: 'owner',
       color: 0,
       active: true,
       isOnline: true,
       isOwner: true,
+      companyId,
+      companyName: name,
       createdAt: serverTimestamp(),
       createdAtMs: now,
       lastLoginAt: serverTimestamp(),
@@ -460,7 +497,10 @@ async function createCompany(companyName, adminName, email, password) {
       companyId,
       name,
       ownerUid: cred.user.uid,
-      ownerEmail: lower,
+      ownerUsername: username,
+      ownerAuthEmail: authEmail,
+      ownerEmail: contact,
+      ownerContactEmail: contact,
       ownerName,
       active: true,
       plan: 'base',
@@ -471,15 +511,18 @@ async function createCompany(companyName, adminName, email, password) {
       appVersion
     });
     batch.set(companyScopedDoc(companyId, 'users', cred.user.uid), profile);
-    batch.set(companyScopedDoc(companyId, 'allowedEmails', lower), {
+    batch.set(companyScopedDoc(companyId, 'allowedUsers', username), {
+      username,
       name: ownerName,
-      email: lower,
+      email: contact,
+      contactEmail: contact,
+      authEmail,
       role: 'owner',
       color: 0,
       active: true,
       uid: cred.user.uid,
       createdByUid: cred.user.uid,
-      createdByEmail: lower,
+      createdByEmail: contact,
       createdAt: serverTimestamp(),
       createdAtMs: now,
       updatedAt: serverTimestamp(),
@@ -487,7 +530,10 @@ async function createCompany(companyName, adminName, email, password) {
     });
     batch.set(userIndexDoc(cred.user.uid), {
       uid: cred.user.uid,
-      email: lower,
+      username,
+      email: contact,
+      contactEmail: contact,
+      authEmail,
       name: ownerName,
       role: 'owner',
       active: true,
@@ -504,7 +550,7 @@ async function createCompany(companyName, adminName, email, password) {
       totalSaved: 0,
       skippedZero: 0,
       createdByUid: cred.user.uid,
-      createdByEmail: lower,
+      createdByEmail: contact,
       createdAt: serverTimestamp(),
       createdAtMs: now,
       appVersion
@@ -519,17 +565,20 @@ async function createCompany(companyName, adminName, email, password) {
   }
 }
 
-async function registerUser(name, email, password, companyCode) {
-  const lower = normalizeText(email).toLowerCase();
+async function registerUser(usernameInput, password, companyCode) {
   const companyId = cleanCompanyCode(companyCode);
+  const username = cleanUsername(usernameInput);
   if (!companyId) throw new Error('Ingresa el código de empresa que te entregó el administrador.');
+  if (!username) throw new Error('Ingresa el usuario/nickname autorizado.');
+  if (!password || password.length < 6) throw new Error('La contraseña debe tener mínimo 6 caracteres.');
+  const authEmail = internalAuthEmail(companyId, username);
   pendingAuthSetup = true;
   try {
-    const cred = await createUserWithEmailAndPassword(auth, lower, password);
-    const allowed = await getAllowedUserForCompany(companyId, lower);
+    const cred = await createUserWithEmailAndPassword(auth, authEmail, password);
+    const allowed = await getAllowedUserForCompany(companyId, username);
     if (!allowed) {
       await signOut(auth);
-      throw new Error('Este correo no está autorizado o está inactivo para esa empresa. Solicita acceso al administrador.');
+      throw new Error('Este usuario no está autorizado o está inactivo para esa empresa. Solicita acceso al administrador.');
     }
     const companySnap = await getDoc(doc(db, 'companies', companyId));
     if (!companySnap.exists()) {
@@ -541,11 +590,15 @@ async function registerUser(name, email, password, companyCode) {
       await signOut(auth);
       throw new Error('Esta empresa está inactiva. Contacta a soporte.');
     }
+    const contact = normalizeText(allowed.contactEmail || allowed.email).toLowerCase();
     const now = Date.now();
     const profile = {
       uid: cred.user.uid,
-      name: normalizeText(name) || allowed.name || lower.split('@')[0],
-      email: lower,
+      username,
+      name: allowed.name || username,
+      email: contact,
+      contactEmail: contact,
+      authEmail,
       role: allowed.role === 'owner' ? 'admin' : (allowed.role || 'inventariador'),
       color: normalizeColor(allowed.color, 0),
       active: allowed.active !== false,
@@ -561,10 +614,13 @@ async function registerUser(name, email, password, companyCode) {
     };
     const batch = writeBatch(db);
     batch.set(companyScopedDoc(companyId, 'users', cred.user.uid), profile, { merge: true });
-    batch.set(companyScopedDoc(companyId, 'allowedEmails', lower), { uid: cred.user.uid, registeredAt: serverTimestamp(), registeredAtMs: now }, { merge: true });
+    batch.set(companyScopedDoc(companyId, 'allowedUsers', username), { uid: cred.user.uid, authEmail, registeredAt: serverTimestamp(), registeredAtMs: now }, { merge: true });
     batch.set(userIndexDoc(cred.user.uid), {
       uid: cred.user.uid,
-      email: lower,
+      username,
+      email: contact,
+      contactEmail: contact,
+      authEmail,
       name: profile.name,
       role: profile.role,
       active: profile.active,
@@ -584,27 +640,30 @@ async function registerUser(name, email, password, companyCode) {
   }
 }
 
-async function getAllowedUserForCompany(companyId, email) {
-  const lower = normalizeText(email).toLowerCase();
-  const snap = await getDoc(companyScopedDoc(companyId, 'allowedEmails', lower));
+async function getAllowedUserForCompany(companyId, usernameInput) {
+  const username = cleanUsername(usernameInput);
+  const snap = await getDoc(companyScopedDoc(companyId, 'allowedUsers', username));
   if (!snap.exists()) return null;
   const data = snap.data();
   if (data.active === false) return null;
-  return { ...data, email: lower };
+  return { ...data, username };
 }
 
 async function ensureProfile(user) {
-  const lower = normalizeText(user.email).toLowerCase();
+  const authEmail = normalizeText(user.email).toLowerCase();
   state.companyId = null;
   state.company = null;
   state.isSupport = false;
 
-  if (isSupportEmail(lower)) {
+  if (isSupportEmail(authEmail)) {
     state.isSupport = true;
     return {
       uid: user.uid,
-      name: user.displayName || lower.split('@')[0],
-      email: lower,
+      name: user.displayName || authEmail.split('@')[0],
+      username: authEmail.split('@')[0],
+      email: authEmail,
+      contactEmail: authEmail,
+      authEmail,
       role: 'support',
       active: true,
       color: 0,
@@ -615,7 +674,7 @@ async function ensureProfile(user) {
   }
 
   const indexSnap = await getDoc(userIndexDoc(user.uid));
-  if (!indexSnap.exists()) throw new Error('Usuario autenticado, pero sin empresa asociada. Si eres usuario invitado, crea acceso con el código de empresa.');
+  if (!indexSnap.exists()) throw new Error('Usuario autenticado, pero sin empresa asociada. Si eres usuario invitado, crea acceso con el código de empresa y tu usuario.');
   const index = indexSnap.data();
   if (index.active === false) throw new Error('Tu acceso está inactivo. Solicita activación al administrador de tu empresa.');
 
@@ -634,11 +693,16 @@ async function ensureProfile(user) {
   const existing = userSnap.exists() ? userSnap.data() : {};
   if (existing.active === false) throw new Error('Tu usuario está inactivo. Solicita activación al administrador.');
 
+  const username = cleanUsername(existing.username || index.username || authEmail.split('@')[0]);
+  const contact = normalizeText(existing.contactEmail || existing.email || index.contactEmail || index.email || '').toLowerCase();
   const role = existing.role || index.role || 'inventariador';
   const profile = {
     uid: user.uid,
-    name: existing.name || index.name || user.displayName || lower.split('@')[0],
-    email: lower,
+    username,
+    name: existing.name || index.name || user.displayName || username,
+    email: contact || authEmail,
+    contactEmail: contact || authEmail,
+    authEmail,
     role,
     color: normalizeColor(existing.color, normalizeColor(index.color, 0)),
     active: true,
@@ -657,7 +721,10 @@ async function ensureProfile(user) {
   await setDoc(ref, profile, { merge: true });
   await setDoc(userIndexDoc(user.uid), {
     uid: user.uid,
-    email: lower,
+    username,
+    email: profile.email,
+    contactEmail: profile.contactEmail,
+    authEmail,
     name: profile.name,
     role: profile.role,
     active: true,
@@ -712,7 +779,7 @@ function applyRoleUI() {
   document.querySelectorAll('.company-only:not(.tab-btn)').forEach(el => setElementVisible(el, !support));
 
   $('sideUserName').textContent = state.profile?.name || '-';
-  $('sideUserEmail').textContent = state.user?.email || '-';
+  $('sideUserEmail').textContent = state.profile?.username ? `${state.profile.username} · ${state.profile.contactEmail || state.profile.email || '-'}` : (state.profile?.email || '-');
   $('sideUserRole').textContent = support ? 'Soporte de plataforma' : roleLabel(state.profile?.role);
   const companyEl = $('sideCompanyName');
   if (companyEl) companyEl.textContent = support ? 'Panel de soporte' : (state.company?.name || 'Sin empresa');
@@ -792,7 +859,7 @@ function attachRealtimeListeners() {
     renderAll();
   }));
   if (isAdmin()) {
-    unsubscribers.push(onSnapshot(query(companyCollection('allowedEmails'), orderBy('email')), snap => {
+    unsubscribers.push(onSnapshot(query(companyCollection('allowedUsers'), orderBy('username')), snap => {
       state.allowedUsers = Object.fromEntries(snap.docs.map(d => [d.id, { id: d.id, ...d.data() }]));
       renderUsers();
     }));
@@ -1109,37 +1176,42 @@ function renderLockBanner(lab) {
   }
 }
 
-function registeredByEmail() {
-  const byEmail = new Map();
+function registeredByUsername() {
+  const byUser = new Map();
   for (const u of Object.values(state.registeredUsers || {})) {
-    if (u.email) byEmail.set(String(u.email).toLowerCase(), u);
+    const username = cleanUsername(u.username || '');
+    if (username) byUser.set(username, u);
   }
-  return byEmail;
+  return byUser;
 }
 
-function countStatsForUser(email, uid) {
+function countStatsForUser(username, email, uid) {
+  const user = cleanUsername(username || '');
   const e = String(email || '').toLowerCase();
   const list = Object.values(state.counts || {}).filter(c => {
-    const ce = String(c.updatedByEmail || '').toLowerCase();
-    return (uid && c.updatedByUid === uid) || (e && ce === e);
+    const ce = String(c.updatedByEmail || c.updatedByContactEmail || '').toLowerCase();
+    const cu = cleanUsername(c.updatedByUsername || '');
+    return (uid && c.updatedByUid === uid) || (user && cu === user) || (e && ce === e);
   }).sort((a,b) => Number(b.updatedAtMs || 0) - Number(a.updatedAtMs || 0));
   return { total: list.length, last: list[0] || null, list };
 }
 
 function mergedUsers() {
-  const byEmail = registeredByEmail();
+  const byUser = registeredByUsername();
   const map = new Map();
   for (const a of Object.values(state.allowedUsers || {})) {
-    const email = String(a.email || a.id || '').toLowerCase();
-    if (!email) continue;
-    map.set(email, { ...a, email, registered: byEmail.get(email) || null });
+    const username = cleanUsername(a.username || a.id || '');
+    if (!username) continue;
+    const contactEmail = normalizeText(a.contactEmail || a.email || '').toLowerCase();
+    map.set(username, { ...a, username, email: contactEmail, contactEmail, registered: byUser.get(username) || null });
   }
-  for (const r of byEmail.values()) {
-    const email = String(r.email || '').toLowerCase();
-    if (!email || map.has(email)) continue;
-    map.set(email, { name: r.name, email, role: r.role, active: r.active, color: r.color, registered: r, onlyRegistered: true });
+  for (const r of byUser.values()) {
+    const username = cleanUsername(r.username || '');
+    if (!username || map.has(username)) continue;
+    const contactEmail = normalizeText(r.contactEmail || r.email || '').toLowerCase();
+    map.set(username, { name: r.name, username, email: contactEmail, contactEmail, role: r.role, active: r.active, color: r.color, registered: r, onlyRegistered: true });
   }
-  return [...map.values()].sort((a,b) => (a.name || a.email || '').localeCompare(b.name || b.email || '', 'es'));
+  return [...map.values()].sort((a,b) => (a.name || a.username || '').localeCompare(b.name || b.username || '', 'es'));
 }
 
 function renderUsers() {
@@ -1148,7 +1220,7 @@ function renderUsers() {
   const queryText = normalizeKey(getValue('userSearch'));
   let users = mergedUsers();
   if (queryText) {
-    users = users.filter(u => normalizeKey([u.name, u.email, u.role, u.active === false ? 'inactivo' : 'activo', u.registered ? 'registrado' : 'pendiente'].join(' ')).includes(queryText));
+    users = users.filter(u => normalizeKey([u.name, u.username, u.contactEmail, u.email, u.role, u.active === false ? 'inactivo' : 'activo', u.registered ? 'registrado' : 'pendiente'].join(' ')).includes(queryText));
   }
   const total = mergedUsers();
   const setText = (id, value) => { const el = $(id); if (el) el.textContent = nf.format(value); };
@@ -1163,28 +1235,30 @@ function renderUsers() {
   }
 
   body.innerHTML = users.map(u => {
-    const email = String(u.email || u.id || '').toLowerCase();
+    const username = cleanUsername(u.username || u.id || '');
+    const email = normalizeText(u.contactEmail || u.email || '').toLowerCase();
     const registered = u.registered || null;
     const active = u.active !== false && registered?.active !== false;
     const online = userOnline(registered);
-    const stats = countStatsForUser(email, registered?.uid || registered?.id);
+    const stats = countStatsForUser(username, email, registered?.uid || registered?.id);
     const color = normalizeColor(u.color ?? registered?.color, 0);
     const colorClass = 'user-color-' + color;
-    const isMainAdmin = isOwnerEmail(email) || (u.role || registered?.role) === 'owner';
+    const role = u.role || registered?.role || 'inventariador';
+    const isMainAdmin = role === 'owner';
     const lastAccess = registered?.lastLoginAtMs ? fmtDate(registered.lastLoginAtMs) : 'Sin ingreso registrado';
     const lastActive = registered?.lastActiveAtMs ? fmtDate(registered.lastActiveAtMs) : 'Sin actividad registrada';
     const lastCount = stats.last?.updatedAtMs ? fmtDate(stats.last.updatedAtMs) : 'Sin conteos';
-    return `<article class="user-card ${active ? '' : 'inactive'}" data-user-email="${escapeHtml(email)}" data-user-uid="${escapeHtml(registered?.uid || registered?.id || '')}">
+    return `<article class="user-card ${active ? '' : 'inactive'}" data-user-username="${escapeHtml(username)}" data-user-email="${escapeHtml(email)}" data-user-auth-email="${escapeHtml(u.authEmail || registered?.authEmail || '')}" data-user-uid="${escapeHtml(registered?.uid || registered?.id || '')}">
       <div class="user-card-main">
-        <div class="user-avatar ${colorClass}">${escapeHtml((u.name || email || '?').slice(0,1).toUpperCase())}</div>
+        <div class="user-avatar ${colorClass}">${escapeHtml((u.name || username || '?').slice(0,1).toUpperCase())}</div>
         <div class="user-info">
           <div class="user-title-row">
             <input class="user-name-input" data-user-field="name" value="${escapeHtml(u.name || registered?.name || '')}" ${isMainAdmin ? 'readonly' : ''} />
             <span class="online-pill ${online ? 'online' : ''}">${online ? 'En línea' : 'Fuera de línea'}</span>
           </div>
-          <div class="user-email">${escapeHtml(email)}</div>
+          <div class="user-email">Usuario: <strong>${escapeHtml(username)}</strong>${email ? ` · Contacto: ${escapeHtml(email)}` : ''}</div>
           <div class="user-meta">
-            <span class="role-pill ${['admin','owner'].includes(u.role || registered?.role) ? 'admin' : ''}">${escapeHtml(roleLabel(u.role || registered?.role || 'inventariador'))}</span>
+            <span class="role-pill ${['admin','owner'].includes(role) ? 'admin' : ''}">${escapeHtml(roleLabel(role))}</span>
             <span class="state-pill ${active ? 'active' : 'inactive'}">${active ? 'Activo' : 'Inactivo'}</span>
             <span class="state-pill ${registered ? 'registered' : 'pending'}">${registered ? 'Registrado' : 'Pendiente'}</span>
             <span class="user-chip ${colorClass}">${USER_COLOR_LABELS[color]}</span>
@@ -1192,7 +1266,7 @@ function renderUsers() {
         </div>
       </div>
       <div class="user-edit-grid">
-        <div><label>Rol</label><select data-user-field="role" ${isMainAdmin ? 'disabled' : ''}><option value="inventariador" ${!['admin','owner'].includes(u.role || registered?.role) ? 'selected' : ''}>Inventariador</option><option value="admin" ${['admin','owner'].includes(u.role || registered?.role) ? 'selected' : ''}>Administrador</option></select></div>
+        <div><label>Rol</label><select data-user-field="role" ${isMainAdmin ? 'disabled' : ''}><option value="inventariador" ${!['admin','owner'].includes(role) ? 'selected' : ''}>Inventariador</option><option value="admin" ${['admin','owner'].includes(role) ? 'selected' : ''}>Administrador</option></select></div>
         <div><label>Estado</label><select data-user-field="active" ${isMainAdmin ? 'disabled' : ''}><option value="true" ${active ? 'selected' : ''}>Activo</option><option value="false" ${!active ? 'selected' : ''}>Inactivo</option></select></div>
         <div><label>Color</label><select data-user-field="color">${userColorOptions(color)}</select></div>
       </div>
@@ -1206,7 +1280,7 @@ function renderUsers() {
         <button class="btn" type="button" data-user-action="save">Guardar</button>
         <button class="btn secondary" type="button" data-user-action="history">Historial</button>
         <button class="btn secondary" type="button" data-user-action="invite">Enviar acceso</button>
-        <button class="btn secondary" type="button" data-user-action="reset">Restablecer contraseña</button>
+        <button class="btn secondary" type="button" data-user-action="reset">Reenviar acceso</button>
         <button class="btn danger" type="button" data-user-action="delete" ${isMainAdmin ? 'disabled' : ''}>Borrar usuario</button>
       </div>
     </article>`;
@@ -1252,19 +1326,30 @@ function renderAll() {
 
 async function createAllowedUser() {
   const name = normalizeText(getValue('newUserName'));
-  const email = normalizeText(getValue('newUserEmail')).toLowerCase();
+  const username = cleanUsername(getValue('newUserUsername'));
+  const contactEmail = normalizeText(getValue('newUserEmail')).toLowerCase();
   const role = getValue('newUserRole', 'inventariador');
   const color = normalizeColor(getValue('newUserColor', '0'));
-  if (!name || !email) return showMessage($('userMessage'), 'Ingresa nombre y correo.', 'warn');
-  const invite = { name, email, role, color };
-  const invitationUrl = createAccessUrl(email);
-  await setDoc(companyDoc('allowedEmails', email), {
-    name, email, role, color, active: true, companyId: state.companyId, companyName: state.company?.name || '',
+  if (!name || !username || !contactEmail) return showMessage($('userMessage'), 'Ingresa nombre, usuario y correo de contacto.', 'warn');
+  const authEmail = internalAuthEmail(state.companyId, username);
+  const invite = { name, username, email: contactEmail, contactEmail, authEmail, role, color };
+  const invitationUrl = createAccessUrl(username);
+  await setDoc(companyDoc('allowedUsers', username), {
+    username,
+    name,
+    email: contactEmail,
+    contactEmail,
+    authEmail,
+    role,
+    color,
+    active: true,
+    companyId: state.companyId,
+    companyName: state.company?.name || '',
     invitationUrl,
     invitedAt: serverTimestamp(),
     invitedAtMs: Date.now(),
     createdByUid: state.user.uid,
-    createdByEmail: state.user.email,
+    createdByEmail: contactEmailOfCurrentUser(),
     createdAt: serverTimestamp(),
     createdAtMs: Date.now(),
     updatedAt: serverTimestamp(),
@@ -1272,41 +1357,48 @@ async function createAllowedUser() {
     appVersion
   }, { merge: true });
   $('newUserName').value = '';
+  $('newUserUsername').value = '';
   $('newUserEmail').value = '';
   $('newUserColor').value = String((color + 1) % 8);
   const msg = $('userMessage');
-  showMessage(msg, `Usuario autorizado: ${email}. Código empresa: ${state.companyId}.`, 'info');
+  showMessage(msg, `Usuario autorizado: ${username}. Código empresa: ${state.companyId}.`, 'info');
   msg.innerHTML = `
-    <strong>Usuario autorizado:</strong> ${escapeHtml(email)}<br>
+    <strong>Usuario autorizado:</strong> ${escapeHtml(username)}<br>
+    Correo de contacto: <strong>${escapeHtml(contactEmail)}</strong><br>
     Código empresa: <strong>${escapeHtml(state.companyId)}</strong><br>
     Enlace Crear acceso: <a href="${escapeHtml(invitationUrl)}" target="_blank" rel="noopener">abrir enlace</a>
     <div class="invite-actions">
       <a class="btn secondary" href="${escapeHtml(invitationMailto(invite))}">Enviar invitación por correo</a>
-      <button class="btn ghost" type="button" data-copy-invite="${escapeHtml(email)}">Copiar mensaje</button>
+      <button class="btn ghost" type="button" data-copy-invite="${escapeHtml(username)}">Copiar mensaje</button>
     </div>
-    <div class="small">Por seguridad, la app abre tu correo con el mensaje listo. Para envío automático sin tocar “Enviar”, se necesitaría una función de servidor.</div>`;
+    <div class="small">El usuario iniciará sesión con código de empresa + usuario + contraseña. El correo solo queda como contacto/invitación.</div>`;
 }
 
-async function copyInviteForEmail(email) {
-  const item = mergedUsers().find(u => String(u.email || u.id || '').toLowerCase() === String(email || '').toLowerCase()) || { email };
+async function copyInviteForEmail(username) {
+  const item = mergedUsers().find(u => cleanUsername(u.username || u.id || '') === cleanUsername(username)) || { username };
   const text = invitationEmailText(item);
   await copyTextToClipboard(text);
-  showMessage($('userMessage'), `Mensaje de invitación copiado para ${email}.`, 'info');
+  showMessage($('userMessage'), `Mensaje de invitación copiado para ${cleanUsername(username)}.`, 'info');
 }
 
 function sendUserInvite(card) {
   const data = getUserCardData(card);
-  if (!data?.email) return;
+  if (!data?.username) return;
   location.href = invitationMailto(data);
-  showMessage($('userMessage'), `Se abrió el correo de invitación para ${data.email}. Revisa el mensaje y presiona Enviar.`, 'info');
+  showMessage($('userMessage'), `Se abrió el correo de invitación para ${data.username}. Revisa el mensaje y presiona Enviar.`, 'info');
 }
 
 function getUserCardData(card) {
-  const email = card?.dataset?.userEmail || '';
+  const username = cleanUsername(card?.dataset?.userUsername || '');
+  const email = normalizeText(card?.dataset?.userEmail || '').toLowerCase();
+  const authEmail = normalizeText(card?.dataset?.userAuthEmail || '').toLowerCase();
   const uid = card?.dataset?.userUid || '';
   const field = name => card.querySelector(`[data-user-field="${name}"]`);
   return {
+    username,
     email,
+    contactEmail: email,
+    authEmail,
     uid,
     name: normalizeText(field('name')?.value || ''),
     role: field('role')?.value || 'inventariador',
@@ -1317,35 +1409,48 @@ function getUserCardData(card) {
 
 async function saveUserCard(card) {
   const data = getUserCardData(card);
-  if (!data.email) return;
-  if (isOwnerEmail(data.email)) {
+  if (!data.username) return;
+  const original = state.allowedUsers?.[data.username] || {};
+  if ((original.role || data.role) === 'owner') {
     data.role = 'owner';
     data.active = true;
   }
   if (!data.name) return showMessage($('userMessage'), 'El nombre no puede quedar vacío.', 'warn');
-  await setDoc(companyDoc('allowedEmails', data.email), {
+  const authEmail = data.authEmail || original.authEmail || internalAuthEmail(state.companyId, data.username);
+  await setDoc(companyDoc('allowedUsers', data.username), {
+    username: data.username,
     name: data.name,
     email: data.email,
+    contactEmail: data.email,
+    authEmail,
     role: data.role,
     active: data.active,
     color: data.color,
     updatedByUid: state.user.uid,
-    updatedByEmail: state.user.email,
+    updatedByEmail: contactEmailOfCurrentUser(),
     updatedAt: serverTimestamp(),
     updatedAtMs: Date.now()
   }, { merge: true });
   if (data.uid) {
     await setDoc(companyDoc('users', data.uid), {
+      username: data.username,
       name: data.name,
+      email: data.email,
+      contactEmail: data.email,
+      authEmail,
       role: data.role,
       active: data.active,
       color: data.color,
       updatedByUid: state.user.uid,
-      updatedByEmail: state.user.email,
+      updatedByEmail: contactEmailOfCurrentUser(),
       updatedAt: serverTimestamp(),
       updatedAtMs: Date.now()
     }, { merge: true });
     await setDoc(userIndexDoc(data.uid), {
+      username: data.username,
+      email: data.email,
+      contactEmail: data.email,
+      authEmail,
       name: data.name,
       role: data.role,
       active: data.active,
@@ -1355,14 +1460,15 @@ async function saveUserCard(card) {
       updatedAtMs: Date.now()
     }, { merge: true });
   }
-  showMessage($('userMessage'), `Usuario actualizado: ${data.email}`, 'info');
+  showMessage($('userMessage'), `Usuario actualizado: ${data.username}`, 'info');
 }
 
 async function deleteUserCard(card) {
   const data = getUserCardData(card);
-  if (!data.email || isOwnerEmail(data.email)) return;
-  if (!confirm(`Se borrará el usuario ${data.email} del aplicativo. Se eliminará su autorización y perfil de la app. La cuenta de Firebase Authentication no se borra desde GitHub Pages; si quieres eliminarla totalmente, hazlo desde Firebase Console > Authentication. ¿Continuar?`)) return;
-  await deleteDoc(companyDoc('allowedEmails', data.email));
+  const original = state.allowedUsers?.[data.username] || {};
+  if (!data.username || original.role === 'owner') return;
+  if (!confirm(`Se borrará el usuario ${data.username} del aplicativo. Se eliminará su autorización y perfil de la app. La cuenta interna de Firebase Authentication no se borra desde GitHub Pages. ¿Continuar?`)) return;
+  await deleteDoc(companyDoc('allowedUsers', data.username));
   if (data.uid) {
     try { await deleteDoc(companyDoc('users', data.uid)); await deleteDoc(userIndexDoc(data.uid)); } catch (err) {
       await setDoc(companyDoc('users', data.uid), {
@@ -1372,25 +1478,25 @@ async function deleteUserCard(card) {
         disabledAt: serverTimestamp(),
         disabledAtMs: Date.now(),
         disabledByUid: state.user.uid,
-        disabledByEmail: state.user.email
+        disabledByEmail: contactEmailOfCurrentUser()
       }, { merge: true });
     }
   }
-  showMessage($('userMessage'), `Usuario borrado del aplicativo: ${data.email}`, 'warn');
+  showMessage($('userMessage'), `Usuario borrado del aplicativo: ${data.username}`, 'warn');
 }
 
 async function resetUserPassword(card) {
   const data = getUserCardData(card);
-  if (!data.email) return;
-  await sendPasswordResetEmail(auth, data.email);
-  showMessage($('userMessage'), `Firebase envió un correo de restablecimiento a ${data.email}. El usuario debe abrir el enlace del correo y crear una nueva contraseña.`, 'info');
+  if (!data.username) return;
+  location.href = invitationMailto(data);
+  showMessage($('userMessage'), `Se abrió nuevamente la invitación para ${data.username}. Si el usuario olvidó su contraseña y ya había creado acceso, la opción simple es crearle otro usuario/nickname o solicitar soporte para borrar la cuenta interna en Firebase Authentication.`, 'info');
 }
 
 function showUserHistory(card) {
   const data = getUserCardData(card);
   const panel = $('userHistoryPanel');
   if (!panel || !data.email) return;
-  const stats = countStatsForUser(data.email, data.uid);
+  const stats = countStatsForUser(data.username, data.email, data.uid);
   const rows = stats.list.slice(0, 30);
   panel.classList.remove('hidden');
   panel.innerHTML = `<div class="panel-head"><h3>Historial de ${escapeHtml(data.name || data.email)}</h3><button class="btn secondary" type="button" data-user-action="close-history">Cerrar historial</button></div>
@@ -1501,8 +1607,8 @@ async function replaceInventory(rows, meta) {
     ...meta,
     totalSaved: rows.length,
     loadedByUid: state.user.uid,
-    loadedByName: state.profile?.name || state.user.email,
-    loadedByEmail: state.user.email,
+    loadedByName: state.profile?.name || contactEmailOfCurrentUser(),
+    loadedByEmail: contactEmailOfCurrentUser(),
     loadedAt: serverTimestamp(),
     loadedAtMs: Date.now(),
     appVersion
@@ -1533,8 +1639,8 @@ async function takeLab(lab) {
         labKey: key,
         status: 'active',
         lockedByUid: state.user.uid,
-        userName: state.profile?.name || state.user.email,
-        userEmail: state.user.email,
+        userName: state.profile?.name || contactEmailOfCurrentUser(),
+        userEmail: contactEmailOfCurrentUser(),
         startedAt: serverTimestamp(),
         startedAtMs: now,
         updatedAt: serverTimestamp(),
@@ -1573,8 +1679,8 @@ async function touchActiveLock() {
       labKey: key,
       status: 'active',
       lockedByUid: state.user.uid,
-      userName: state.profile?.name || state.user.email,
-      userEmail: state.user.email,
+      userName: state.profile?.name || contactEmailOfCurrentUser(),
+      userEmail: contactEmailOfCurrentUser(),
       updatedAt: serverTimestamp(),
       updatedAtMs: Date.now(),
       expiresAtMs: Date.now() + LOCK_TIMEOUT_MS
@@ -1594,7 +1700,7 @@ async function releaseActiveLab() {
         labKey: key,
         status: 'released',
         releasedByUid: state.user.uid,
-        releasedByEmail: state.user.email,
+        releasedByEmail: contactEmailOfCurrentUser(),
         releasedAt: serverTimestamp(),
         releasedAtMs: Date.now(),
         expiresAtMs: Date.now()
@@ -1618,8 +1724,8 @@ async function finishActiveLab() {
     labKey: labKey(lab),
     completed: true,
     completedByUid: state.user.uid,
-    completedByName: state.profile?.name || state.user.email,
-    completedByEmail: state.user.email,
+    completedByName: state.profile?.name || contactEmailOfCurrentUser(),
+    completedByEmail: contactEmailOfCurrentUser(),
     completedAt: serverTimestamp(),
     completedAtMs: Date.now()
   }, { merge: true });
@@ -1675,8 +1781,9 @@ function updateCountCardVisual(input) {
     diff: data.diff,
     novelty: noveltyText(data.diff),
     updatedByUid: state.user?.uid || '',
-    updatedByName: state.profile?.name || state.user?.email || '',
-    updatedByEmail: state.user?.email || '',
+    updatedByUsername: state.profile?.username || '',
+    updatedByName: state.profile?.name || contactEmailOfCurrentUser() || '',
+    updatedByEmail: contactEmailOfCurrentUser() || '',
     updatedByColor: normalizeColor(state.profile?.color, 0),
     updatedAtMs: Date.now(),
     localDraft: true
@@ -1709,8 +1816,9 @@ async function updateCountFromInput(input) {
     diff,
     novelty: noveltyText(diff),
     updatedByUid: state.user.uid,
-    updatedByName: state.profile?.name || state.user.email,
-    updatedByEmail: state.user.email,
+    updatedByUsername: state.profile?.username || '',
+    updatedByName: state.profile?.name || contactEmailOfCurrentUser(),
+    updatedByEmail: contactEmailOfCurrentUser(),
     updatedByColor: normalizeColor(state.profile?.color, 0),
     updatedAt: serverTimestamp(),
     updatedAtMs: Date.now()
@@ -1792,7 +1900,7 @@ async function saveFactorFromModal() {
     updatedAt: serverTimestamp(),
     updatedAtMs: Date.now(),
     updatedByUid: state.user.uid,
-    updatedByEmail: state.user.email
+    updatedByEmail: contactEmailOfCurrentUser()
   }, { merge: true });
   closeFactorModal();
 }
@@ -1822,7 +1930,7 @@ function generatePdf() {
   docPdf.setFontSize(10);
   docPdf.text(`Laboratorio: ${lab}`, 40, 60);
   docPdf.text(`Generado: ${now.toLocaleString('es-EC')}`, 40, 76);
-  docPdf.text(`Usuario: ${state.profile?.name || state.user?.email}`, 40, 92);
+  docPdf.text(`Usuario: ${state.profile?.name || contactEmailOfCurrentUser()}`, 40, 92);
   if (!rows.length) {
     docPdf.text('No hay artículos para el filtro actual.', 40, 120);
   } else {
@@ -1897,13 +2005,13 @@ function attachEvents() {
   document.querySelectorAll('.auth-tab').forEach(btn => btn.addEventListener('click', () => switchAuthTab(btn.dataset.authTab)));
   $('loginForm').addEventListener('submit', async e => {
     e.preventDefault();
-    try { await login(getValue('loginEmail'), getValue('loginPassword')); }
+    try { await login(getValue('loginCompanyCode'), getValue('loginUsername'), getValue('loginPassword')); }
     catch (err) { showMessage($('authMessage'), 'Error al ingresar: ' + err.message, 'danger'); }
   });
   $('registerForm').addEventListener('submit', async e => {
     e.preventDefault();
     try {
-      await registerUser(getValue('registerName'), getValue('registerEmail'), getValue('registerPassword'), getValue('registerCompanyCode'));
+      await registerUser(getValue('registerUsername'), getValue('registerPassword'), getValue('registerCompanyCode'));
       showMessage($('authMessage'), 'Cuenta creada correctamente.', 'info');
     } catch (err) { showMessage($('authMessage'), 'Error al crear cuenta: ' + err.message, 'danger'); }
   });
@@ -1912,7 +2020,7 @@ function attachEvents() {
   if (createCompanyForm) createCompanyForm.addEventListener('submit', async e => {
     e.preventDefault();
     try {
-      const companyId = await createCompany(getValue('companyName'), getValue('companyAdminName'), getValue('companyAdminEmail'), getValue('companyAdminPassword'));
+      const companyId = await createCompany(getValue('companyName'), getValue('companyAdminName'), getValue('companyAdminUsername'), getValue('companyAdminEmail'), getValue('companyAdminPassword'));
       showMessage($('authMessage'), `Empresa creada correctamente. Código empresa: ${companyId}`, 'info');
     } catch (err) {
       showMessage($('authMessage'), 'Error al crear empresa: ' + err.message, 'danger');
@@ -1923,11 +2031,10 @@ function attachEvents() {
   if (resetForm) resetForm.addEventListener('submit', async e => {
     e.preventDefault();
     try {
-      await sendLoginPasswordReset(getValue('resetEmail'));
-      showMessage($('authMessage'), 'Correo de recuperación enviado. Revisa tu bandeja de entrada o spam.', 'info');
-      switchAuthTab('login');
+      await sendLoginPasswordReset();
+      showMessage($('authMessage'), 'Solicita al administrador que te reenvíe el acceso o cree un nuevo usuario/nickname.', 'info');
     } catch (err) {
-      showMessage($('authMessage'), 'No se pudo enviar el correo: ' + err.message, 'danger');
+      showMessage($('authMessage'), err.message, 'warn');
     }
   });
 
@@ -2064,7 +2171,7 @@ function authReady() {
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', async () => {
     try {
-      const registration = await navigator.serviceWorker.register('./sw.js?v=1.3');
+      const registration = await navigator.serviceWorker.register('./sw.js?v=1.4');
       registration.update?.();
       if (registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' });
       registration.addEventListener('updatefound', () => {

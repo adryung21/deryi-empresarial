@@ -1,64 +1,28 @@
-# DERYI EMPRESARIAL - Inventario multiempresa
+# DERYI Empresarial Multiempresa
 
-Aplicativo PWA para inventarios por empresa usando Firebase Authentication, Firestore y GitHub Pages.
+Versión: Multiempresa v1.4 Usuario - 2026-06-29
 
-## Qué incluye
+## Cambios principales
 
-- Crear empresa desde la pantalla inicial.
-- Administrador principal automático para cada empresa.
-- Usuarios separados por empresa.
-- Inventario, conteos, laboratorios y bloqueos separados por empresa.
-- Carga de Excel/ODS/CSV por empresa.
-- Conteo físico por enteros y unidades.
-- Bloqueo temporal de laboratorio.
-- Historial básico de conteos por usuario.
-- Restablecimiento de contraseña con correo de Firebase.
-- Soporte oculto para el creador de la app.
+- Inicio de sesión con Código de empresa + Usuario/Nickname + Contraseña.
+- El correo queda como correo de contacto e invitación, no como identificador único de acceso.
+- Un mismo correo de contacto puede usarse en diferentes empresas sin causar `auth/email-already-in-use`.
+- Los administradores crean usuarios con nombre, nickname, correo de contacto, rol y color.
+- La invitación incluye código de empresa, usuario/nickname y enlace directo a Crear acceso.
+- Recuperación simple: el administrador reenvía la invitación o crea un nuevo usuario/nickname si el usuario olvidó la contraseña.
 
-## Orden de instalación
+## Archivos importantes
 
-1. Crear proyecto Firebase nuevo.
-2. Activar Authentication > Email/Password.
-3. Crear Firestore Database en modo producción.
-4. Subir estos archivos a un repositorio nuevo de GitHub.
-5. Copiar el contenido de `firestore.rules` en Firebase > Firestore Database > Rules y publicar.
-6. Activar GitHub Pages: Settings > Pages > Deploy from a branch > main > /root.
-7. Abrir la URL de GitHub Pages.
-8. Crear la primera empresa desde la pantalla inicial.
+- `index.html`
+- `app.js`
+- `styles.css`
+- `firebase-config.js`
+- `manifest.json`
+- `sw.js`
+- `firestore.rules`
 
-## Datos importantes
+## Después de subir a GitHub
 
-El código de empresa se genera automáticamente cuando se crea una empresa. El administrador debe compartir ese código con los usuarios que autorice.
-
-Los datos se guardan en Firestore con esta estructura:
-
-```text
-companies/{companyId}/users
-companies/{companyId}/inventory
-companies/{companyId}/counts
-companies/{companyId}/labLocks
-companies/{companyId}/labCompletions
-companies/{companyId}/appMeta
-```
-
-Cada usuario también tiene un índice en:
-
-```text
-userCompanyIndex/{uid}
-```
-
-Ese índice permite que la app sepa a qué empresa pertenece el usuario después de iniciar sesión.
-
-
-## Multiempresa v1.3 - 2026-06-29
-
-- Invitación de usuarios con código de empresa y enlace a Crear acceso.
-- Usuarios inventariadores no pueden abrir Carga de inventario ni Usuarios.
-- Versión visible bajo Cerrar sesión en el menú lateral.
-
-
-## Versión v1.3 - 2026-06-29
-
-- Versión visible en inicio de sesión y debajo de Cerrar sesión.
-- Ocultamiento reforzado de Carga de inventario y Usuarios para inventariadores.
-- Actualización de caché del service worker.
+1. Reemplazar archivos en la raíz del repositorio.
+2. Copiar `firestore.rules` en Firebase → Firestore Database → Rules → Publicar.
+3. Abrir la app con `?v=14` para evitar caché anterior.

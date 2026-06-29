@@ -9,7 +9,7 @@
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="favicon.png" />
   <link rel="apple-touch-icon" href="assets/icons/icon-180.png" />
-  <link rel="stylesheet" href="styles.css?v=1.3" />
+  <link rel="stylesheet" href="styles.css?v=1.4" />
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
@@ -26,8 +26,10 @@
         <button type="button" class="auth-tab" data-auth-tab="reset">Restablecer</button>
       </div>
       <form id="loginForm" class="auth-form">
-        <label for="loginEmail">Correo</label>
-        <input id="loginEmail" type="email" autocomplete="email" required placeholder="usuario@correo.com" />
+        <label for="loginCompanyCode">Código de empresa</label>
+        <input id="loginCompanyCode" autocomplete="organization" required placeholder="Ej. farmacia-san-jose-a1b2c3" />
+        <label for="loginUsername">Usuario / nickname</label>
+        <input id="loginUsername" autocomplete="username" required placeholder="Ej. adrian80" />
         <label for="loginPassword">Contraseña</label>
         <input id="loginPassword" type="password" autocomplete="current-password" required placeholder="Contraseña" />
         <button type="submit" class="btn dark" style="width:100%; margin-top:12px;">Ingresar</button>
@@ -38,32 +40,34 @@
         <input id="companyName" required placeholder="Ej. Farmacia San José" />
         <label for="companyAdminName">Nombre del administrador principal</label>
         <input id="companyAdminName" required placeholder="Nombre y apellido" />
-        <label for="companyAdminEmail">Correo del administrador</label>
+        <label for="companyAdminUsername">Usuario / nickname del administrador</label>
+        <input id="companyAdminUsername" autocomplete="username" required placeholder="Ej. admin" />
+        <label for="companyAdminEmail">Correo de contacto del administrador</label>
         <input id="companyAdminEmail" type="email" autocomplete="email" required placeholder="admin@empresa.com" />
         <label for="companyAdminPassword">Crear contraseña</label>
         <input id="companyAdminPassword" type="password" minlength="6" autocomplete="new-password" required placeholder="Mínimo 6 caracteres" />
         <button type="submit" class="btn dark" style="width:100%; margin-top:12px;">Crear empresa</button>
       </form>
       <form id="registerForm" class="auth-form hidden">
-        <div class="notice info">El administrador preautoriza el correo y entrega el código de empresa. Luego cada usuario crea su contraseña desde aquí.</div>
-        <label for="registerName">Nombre</label>
-        <input id="registerName" required placeholder="Nombre del usuario" />
+        <div class="notice info">El administrador entrega el código de empresa y tu usuario/nickname. Con esos datos crea tu contraseña.</div>
         <label for="registerCompanyCode">Código de empresa</label>
         <input id="registerCompanyCode" required placeholder="Código entregado por el administrador" />
-        <label for="registerEmail">Correo autorizado</label>
-        <input id="registerEmail" type="email" autocomplete="email" required placeholder="usuario@correo.com" />
+        <label for="registerUsername">Usuario / nickname autorizado</label>
+        <input id="registerUsername" autocomplete="username" required placeholder="Ej. adrian80" />
         <label for="registerPassword">Crear contraseña</label>
         <input id="registerPassword" type="password" minlength="6" autocomplete="new-password" required placeholder="Mínimo 6 caracteres" />
-        <button type="submit" class="btn dark" style="width:100%; margin-top:12px;">Crear cuenta</button>
+        <button type="submit" class="btn dark" style="width:100%; margin-top:12px;">Crear acceso</button>
       </form>
       <form id="resetForm" class="auth-form hidden">
-        <div class="notice info">Escribe tu correo registrado y recibirás un enlace para crear una nueva contraseña.</div>
-        <label for="resetEmail">Correo</label>
-        <input id="resetEmail" type="email" autocomplete="email" required placeholder="usuario@correo.com" />
-        <button type="submit" class="btn dark" style="width:100%; margin-top:12px;">Enviar correo de recuperación</button>
+        <div class="notice info">Con ingreso por usuario/nickname, la recuperación simple la gestiona el administrador de tu empresa. Pídele que te reenvíe el acceso o que cree un nuevo usuario si olvidaste tu contraseña.</div>
+        <label for="resetCompanyCode">Código de empresa</label>
+        <input id="resetCompanyCode" placeholder="Código de empresa" />
+        <label for="resetUsername">Usuario / nickname</label>
+        <input id="resetUsername" placeholder="Tu usuario" />
+        <button type="submit" class="btn dark" style="width:100%; margin-top:12px;">Ver indicación</button>
       </form>
       <div id="authMessage" class="notice hidden"></div>
-      <div id="authAppVersion" class="app-version auth-version">Multiempresa v1.3 - 2026-06-29</div>
+      <div id="authAppVersion" class="app-version auth-version">Multiempresa v1.4 Usuario - 2026-06-29</div>
     </div>
   </section>
 
@@ -87,7 +91,7 @@
       <div class="side-bottom">
         <button id="installBtn" class="btn ghost hidden" type="button">Instalar app</button>
         <button id="logoutBtn" class="btn secondary" type="button">Cerrar sesión</button>
-        <div id="sideAppVersion" class="side-version">Multiempresa v1.3 - 2026-06-29</div>
+        <div id="sideAppVersion" class="side-version">Multiempresa v1.4 Usuario - 2026-06-29</div>
       </div>
     </nav>
 
@@ -177,11 +181,12 @@
         <h2>Usuarios</h2>
         <button class="panel-toggle" type="button" data-toggle-section="usersCreateBox" data-label-show="Mostrar creación de usuario" data-label-hide="Ocultar creación de usuario" aria-expanded="true" aria-controls="usersCreateBox"><span class="toggle-icon">▾</span><span class="toggle-text">Ocultar creación de usuario</span></button>
       </div>
-      <div class="notice info">Administra usuarios, roles, colores, estado de acceso, actividad y recuperación de contraseña. Al autorizar un usuario podrás enviarle por correo el código de empresa y el enlace directo a “Crear acceso”.</div>
+      <div class="notice info">Administra usuarios, roles, colores y actividad. Al autorizar un usuario podrás enviarle por correo el código de empresa, su usuario/nickname y el enlace directo a “Crear acceso”.</div>
       <div id="usersCreateBox" class="collapsible-tools">
         <div class="grid user-create-grid">
           <div class="span-3"><label for="newUserName">Nombre</label><input id="newUserName" placeholder="Nombre del usuario" /></div>
-          <div class="span-3"><label for="newUserEmail">Correo</label><input id="newUserEmail" type="email" placeholder="usuario@correo.com" /></div>
+          <div class="span-2"><label for="newUserUsername">Usuario</label><input id="newUserUsername" placeholder="nickname" /></div>
+          <div class="span-3"><label for="newUserEmail">Correo de contacto</label><input id="newUserEmail" type="email" placeholder="usuario@correo.com" /></div>
           <div class="span-2"><label for="newUserRole">Rol</label><select id="newUserRole"><option value="inventariador">Inventariador</option><option value="admin">Administrador</option></select></div>
           <div class="span-2"><label for="newUserColor">Color</label><select id="newUserColor" class="user-color-select"><option value="0">Azul</option><option value="1">Verde</option><option value="2">Amarillo</option><option value="3">Rosa</option><option value="4">Morado</option><option value="5">Celeste</option><option value="6">Naranja</option><option value="7">Cian</option></select></div>
           <div class="span-2"><button class="btn" id="btnCreateUser" type="button">Autorizar</button></div>
@@ -195,7 +200,7 @@
         <div class="card"><div class="label">Administradores</div><div class="metric" id="uAdmins">0</div></div>
       </div>
       <div class="grid">
-        <div class="span-12"><label for="userSearch">Buscar usuario</label><input id="userSearch" placeholder="Nombre, correo, rol o estado" /></div>
+        <div class="span-12"><label for="userSearch">Buscar usuario</label><input id="userSearch" placeholder="Nombre, usuario, correo, rol o estado" /></div>
       </div>
       <div id="usersBody" class="users-list"></div>
       <div id="userHistoryPanel" class="user-history-panel hidden"></div>
@@ -237,6 +242,6 @@
     </div>
   </div>
 
-  <script type="module" src="app.js?v=1.3"></script>
+  <script type="module" src="app.js?v=1.4"></script>
 </body>
 </html>

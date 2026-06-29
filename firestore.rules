@@ -17,12 +17,8 @@ service cloud.firestore {
       return /databases/$(database)/documents/companies/$(companyId)/users/$(uid);
     }
 
-    function allowedPath(companyId, email) {
-      return /databases/$(database)/documents/companies/$(companyId)/allowedEmails/$(email);
-    }
-
-    function indexPath(uid) {
-      return /databases/$(database)/documents/userCompanyIndex/$(uid);
+    function allowedUserPath(companyId, username) {
+      return /databases/$(database)/documents/companies/$(companyId)/allowedUsers/$(username);
     }
 
     function isMember(companyId) {
@@ -39,16 +35,17 @@ service cloud.firestore {
       return isSupport() || role(companyId) in ["owner", "admin"];
     }
 
-    function isAllowedEmail(companyId) {
+    function isAllowedUsername(companyId, username) {
       return signedIn()
-        && exists(allowedPath(companyId, request.auth.token.email))
-        && get(allowedPath(companyId, request.auth.token.email)).data.active == true;
+        && exists(allowedUserPath(companyId, username))
+        && get(allowedUserPath(companyId, username)).data.active == true
+        && get(allowedUserPath(companyId, username)).data.authEmail == request.auth.token.email;
     }
 
     function isCompanyCreator(companyId) {
       return signedIn()
         && getAfter(companyPath(companyId)).data.ownerUid == request.auth.uid
-        && getAfter(companyPath(companyId)).data.ownerEmail == request.auth.token.email;
+        && getAfter(companyPath(companyId)).data.ownerAuthEmail == request.auth.token.email;
     }
 
     match /userCompanyIndex/{uid} {
@@ -68,33 +65,46 @@ service cloud.firestore {
     match /companies/{companyId} {
       allow create: if signedIn()
         && request.resource.data.ownerUid == request.auth.uid
-        && request.resource.data.ownerEmail == request.auth.token.email;
-      allow get: if isSupport() || isMember(companyId) || isAllowedEmail(companyId);
+        && request.resource.data.ownerAuthEmail == request.auth.token.email;
+      allow get: if signedIn();
       allow list: if isSupport();
       allow update: if isSupport() || isCompanyAdmin(companyId);
       allow delete: if isSupport();
 
-      match /allowedEmails/{emailId} {
-        allow get: if isSupport() || isCompanyAdmin(companyId) || (signedIn() && request.auth.token.email == emailId);
+      match /allowedUsers/{username} {
+        allow get: if isSupport() || isCompanyAdmin(companyId) || (signedIn() && resource.data.authEmail == request.auth.token.email);
         allow list: if isSupport() || isCompanyAdmin(companyId);
         allow create: if isSupport()
           || isCompanyAdmin(companyId)
-          || (signedIn() && request.auth.token.email == emailId && request.resource.data.uid == request.auth.uid && request.resource.data.role == "owner" && isCompanyCreator(companyId));
+          || (signedIn()
+            && username == request.resource.data.username
+            && request.resource.data.uid == request.auth.uid
+            && request.resource.data.role == "owner"
+            && request.resource.data.authEmail == request.auth.token.email
+            && isCompanyCreator(companyId));
         allow update: if isSupport()
           || isCompanyAdmin(companyId)
-          || (signedIn() && request.auth.token.email == emailId && request.resource.data.uid == request.auth.uid && isAllowedEmail(companyId));
+          || (signedIn() && resource.data.authEmail == request.auth.token.email && request.resource.data.authEmail == resource.data.authEmail);
         allow delete: if isSupport() || isCompanyAdmin(companyId);
       }
 
       match /users/{userId} {
-        allow get: if isSupport() || isCompanyAdmin(companyId) || (signedIn() && request.auth.uid == userId && (isMember(companyId) || isAllowedEmail(companyId)));
+        allow get: if isSupport() || isCompanyAdmin(companyId) || (signedIn() && request.auth.uid == userId && isMember(companyId));
         allow list: if isSupport() || isCompanyAdmin(companyId);
         allow create: if isSupport()
           || isCompanyAdmin(companyId)
-          || (signedIn() && request.auth.uid == userId && request.resource.data.email == request.auth.token.email && (isAllowedEmail(companyId) || isCompanyCreator(companyId)));
+          || (signedIn()
+            && request.auth.uid == userId
+            && request.resource.data.authEmail == request.auth.token.email
+            && (isAllowedUsername(companyId, request.resource.data.username) || isCompanyCreator(companyId)));
         allow update: if isSupport()
           || isCompanyAdmin(companyId)
-          || (signedIn() && request.auth.uid == userId && isMember(companyId) && request.resource.data.role == resource.data.role && request.resource.data.active == resource.data.active && request.resource.data.email == resource.data.email);
+          || (signedIn()
+            && request.auth.uid == userId
+            && isMember(companyId)
+            && request.resource.data.role == resource.data.role
+            && request.resource.data.active == resource.data.active
+            && request.resource.data.authEmail == resource.data.authEmail);
         allow delete: if isSupport() || isCompanyAdmin(companyId);
       }
 
