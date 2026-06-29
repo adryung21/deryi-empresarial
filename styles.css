@@ -145,7 +145,7 @@ h3 { margin: 0 0 8px; }
   cursor: pointer;
 }
 .tab-btn.active { background: var(--brand); color: #fff; border-color: var(--brand); }
-.tab-btn.admin-only.hidden { display: none; }
+.tab-btn.admin-only.hidden, .tab-btn[hidden] { display: none !important; }
 .side-bottom { margin-top: auto; display: grid; gap: 8px; }
 
 .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px; align-items: end; }
@@ -647,15 +647,25 @@ input[type="file"] { padding: 10px; }
   .auth-tabs { grid-template-columns: 1fr 1fr; }
 }
 
+.app-version,
 .side-version {
-  margin-top: 2px;
-  padding: 8px 10px;
-  border-radius: 12px;
-  background: rgba(255,255,255,.08);
-  color: rgba(255,255,255,.72);
-  font-size: 11px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  color: rgba(100,116,139,.78);
+  font-size: clamp(10px, 2.6vw, 11px);
   line-height: 1.25;
   text-align: center;
+  font-weight: 700;
+  letter-spacing: .01em;
+}
+.side-version {
+  background: rgba(241,245,249,.72);
+  border: 1px solid rgba(226,232,240,.72);
+}
+.auth-version {
+  margin-top: 12px;
+  opacity: .72;
 }
 .invite-actions {
   display: flex;
