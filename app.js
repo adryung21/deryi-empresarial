@@ -37,7 +37,7 @@ const getValue = (id, fallback = '') => {
 };
 const nf = new Intl.NumberFormat('es-EC', { maximumFractionDigits: 2 });
 const dtf = new Intl.DateTimeFormat('es-EC', { dateStyle: 'short', timeStyle: 'short' });
-const appVersion = 'Multiempresa v1.8 Instalación segura - 2026-06-30';
+const appVersion = 'Multiempresa v1.8.1 Login corregido - 2026-06-30';
 
 let app, auth, db;
 let unsubscribers = [];
@@ -440,10 +440,7 @@ function showInstallGuidance() {
     notice.textContent = msg;
     notice.classList.remove('hidden');
   }
-  alert(msg + '
-
-URL:
-' + currentAppUrl());
+  alert(msg + '\n\nURL:\n' + currentAppUrl());
 }
 
 function prepareInstallButton() {

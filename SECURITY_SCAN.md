@@ -1,6 +1,6 @@
 # Escaneo estático de seguridad - DERYI Empresarial
 
-Versión revisada: Multiempresa v1.8 Instalación segura - 2026-06-30
+Versión revisada: Multiempresa v1.8.1 Login corregido - 2026-06-30
 Fecha: 2026-06-30
 
 ## Alcance
