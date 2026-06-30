@@ -42,6 +42,22 @@ service cloud.firestore {
         && get(allowedUserPath(companyId, username)).data.authEmail == request.auth.token.email;
     }
 
+    function recoveryPath(tokenHash) {
+      return /databases/$(database)/documents/recoveryTokens/$(tokenHash);
+    }
+
+    function isRecoveryForCompany(tokenHash, companyId, username) {
+      return signedIn()
+        && tokenHash is string
+        && exists(recoveryPath(tokenHash))
+        && get(recoveryPath(tokenHash)).data.companyId == companyId
+        && get(recoveryPath(tokenHash)).data.username == username
+        && get(recoveryPath(tokenHash)).data.active == true
+        && get(recoveryPath(tokenHash)).data.used != true
+        && get(recoveryPath(tokenHash)).data.revoked != true
+        && get(recoveryPath(tokenHash)).data.newAuthEmail == request.auth.token.email;
+    }
+
     function isCompanyCreator(companyId) {
       return signedIn()
         && getAfter(companyPath(companyId)).data.ownerUid == request.auth.uid
@@ -49,6 +65,29 @@ service cloud.firestore {
     }
 
 
+
+
+    match /recoveryTokens/{tokenHash} {
+      allow get: if true;
+      allow list: if false;
+      allow create: if signedIn() && (
+        isSupport()
+        || isCompanyAdmin(request.resource.data.companyId)
+        || (isCompanyCreator(request.resource.data.companyId) && request.resource.data.authEmail == request.auth.token.email)
+      );
+      allow update: if signedIn() && (
+        isSupport()
+        || isCompanyAdmin(resource.data.companyId)
+        || (
+          resource.data.active == true
+          && resource.data.used != true
+          && resource.data.revoked != true
+          && resource.data.newAuthEmail == request.auth.token.email
+          && request.resource.data.used == true
+        )
+      );
+      allow delete: if isSupport() || isCompanyAdmin(resource.data.companyId);
+    }
 
     match /loginIndex/{username} {
       allow get: if true;
@@ -93,7 +132,8 @@ service cloud.firestore {
             && isCompanyCreator(companyId));
         allow update: if isSupport()
           || isCompanyAdmin(companyId)
-          || (signedIn() && resource.data.authEmail == request.auth.token.email && request.resource.data.authEmail == resource.data.authEmail);
+          || (signedIn() && resource.data.authEmail == request.auth.token.email && request.resource.data.authEmail == resource.data.authEmail)
+          || isRecoveryForCompany(request.resource.data.recoveryTokenHash, companyId, username);
         allow delete: if isSupport() || isCompanyAdmin(companyId);
       }
 
@@ -105,7 +145,11 @@ service cloud.firestore {
           || (signedIn()
             && request.auth.uid == userId
             && request.resource.data.authEmail == request.auth.token.email
-            && (isAllowedUsername(companyId, request.resource.data.username) || isCompanyCreator(companyId)));
+            && (isAllowedUsername(companyId, request.resource.data.username) || isCompanyCreator(companyId)))
+          || (signedIn()
+            && request.auth.uid == userId
+            && request.resource.data.authEmail == request.auth.token.email
+            && isRecoveryForCompany(request.resource.data.recoveryTokenHash, companyId, request.resource.data.username));
         allow update: if isSupport()
           || isCompanyAdmin(companyId)
           || (signedIn()
@@ -113,7 +157,13 @@ service cloud.firestore {
             && isMember(companyId)
             && request.resource.data.role == resource.data.role
             && request.resource.data.active == resource.data.active
-            && request.resource.data.authEmail == resource.data.authEmail);
+            && request.resource.data.authEmail == resource.data.authEmail)
+          || (signedIn()
+            && request.resource.data.recoveryTokenHash is string
+            && exists(recoveryPath(request.resource.data.recoveryTokenHash))
+            && get(recoveryPath(request.resource.data.recoveryTokenHash)).data.companyId == companyId
+            && get(recoveryPath(request.resource.data.recoveryTokenHash)).data.oldUid == userId
+            && get(recoveryPath(request.resource.data.recoveryTokenHash)).data.newAuthEmail == request.auth.token.email);
         allow delete: if isSupport() || isCompanyAdmin(companyId);
       }
 

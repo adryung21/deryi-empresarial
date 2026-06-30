@@ -37,7 +37,7 @@ const getValue = (id, fallback = '') => {
 };
 const nf = new Intl.NumberFormat('es-EC', { maximumFractionDigits: 2 });
 const dtf = new Intl.DateTimeFormat('es-EC', { dateStyle: 'short', timeStyle: 'short' });
-const appVersion = 'Multiempresa v1.9.2 PDF y contraseñas - 2026-06-30';
+const appVersion = 'Multiempresa v2.0 Recuperación QR/PDF - 2026-06-30';
 
 let app, auth, db;
 let unsubscribers = [];
@@ -474,12 +474,15 @@ function switchAuthTab(tab) {
 
 
 function loginIndexEntry(companyId, username, source = {}) {
+  const cleanCompanyId = cleanCompanyCode(companyId);
+  const cleanUser = cleanUsername(username);
   return {
-    companyId,
-    companyName: normalizeText(source.companyName || state.company?.name || companyId),
-    username: cleanUsername(username),
+    companyId: cleanCompanyId,
+    companyName: normalizeText(source.companyName || state.company?.name || cleanCompanyId),
+    username: cleanUser,
     role: source.role || 'inventariador',
     active: source.active !== false,
+    authEmail: normalizeText(source.authEmail || internalAuthEmail(cleanCompanyId, cleanUser)).toLowerCase(),
     updatedAtMs: Date.now()
   };
 }
@@ -574,6 +577,20 @@ async function searchLoginCompanies() {
   if (companies.length) clearMessage($('authMessage'));
 }
 
+async function authEmailForLogin(companyId, username) {
+  const code = cleanCompanyCode(companyId);
+  const user = cleanUsername(username);
+  try {
+    const snap = await getDoc(loginIndexDoc(user));
+    const entry = snap.exists() ? (snap.data().entries || {})[code] : null;
+    const indexedEmail = normalizeText(entry?.authEmail).toLowerCase();
+    if (indexedEmail) return indexedEmail;
+  } catch (err) {
+    console.warn('No se pudo leer authEmail del índice, usando formato clásico.', err);
+  }
+  return internalAuthEmail(code, user);
+}
+
 async function login(companyCode, username, password) {
   const code = cleanCompanyCode(companyCode);
   const user = cleanUsername(username);
@@ -581,12 +598,12 @@ async function login(companyCode, username, password) {
   // Acceso técnico oculto: código "soporte" y correo real como usuario.
   const authEmail = ['soporte', 'support'].includes(code) && String(username).includes('@')
     ? normalizeText(username).toLowerCase()
-    : internalAuthEmail(code, user);
+    : await authEmailForLogin(code, user);
   await signInWithEmailAndPassword(auth, authEmail, password);
 }
 
 async function sendLoginPasswordReset() {
-  throw new Error('Con usuario/nickname, la recuperación simple la gestiona el administrador de la empresa. Pídele que te reenvíe el acceso o que cree un nuevo usuario si olvidaste tu contraseña.');
+  throw new Error('Usa el código o QR de recuperación entregado por tu empresa para crear una nueva contraseña.');
 }
 
 function getAppBaseUrl() {
@@ -635,6 +652,325 @@ function invitationMailto(user) {
   return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
+function recoveryTokenDoc(tokenHash) {
+  return doc(db, 'recoveryTokens', tokenHash);
+}
+
+function randomRecoveryCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  const raw = Array.from(bytes, b => chars[b % chars.length]).join('');
+  return `REC-${raw.slice(0,4)}-${raw.slice(4,8)}-${raw.slice(8,12)}-${raw.slice(12,16)}`;
+}
+
+function cleanRecoveryCode(value) {
+  return normalizeText(value).toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^REC/, 'REC');
+}
+
+function prettyRecoveryCode(value) {
+  const clean = cleanRecoveryCode(value);
+  if (!clean) return '';
+  const body = clean.startsWith('REC') ? clean.slice(3) : clean;
+  const groups = body.match(/.{1,4}/g) || [];
+  return ['REC', ...groups].join('-');
+}
+
+async function sha256Hex(value) {
+  const data = new TextEncoder().encode(String(value ?? ''));
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function maskDocument(value = '') {
+  const text = normalizeText(value);
+  if (text.length <= 4) return '****';
+  return `${'*'.repeat(Math.max(0, text.length - 4))}${text.slice(-4)}`;
+}
+
+function recoveryUrl(code) {
+  const url = new URL(getAppBaseUrl());
+  url.searchParams.set('auth', 'recover');
+  url.searchParams.set('token', prettyRecoveryCode(code));
+  return url.toString();
+}
+
+function recoveryAuthEmail(companyId, username, tokenHash) {
+  const company = cleanCompanyCode(companyId).replace(/[^a-z0-9]/g, '').slice(0, 16) || 'empresa';
+  const user = cleanUsername(username).replace(/[^a-z0-9]/g, '').slice(0, 16) || 'usuario';
+  const suffix = String(tokenHash || hashString(`${companyId}|${username}|${Date.now()}`)).slice(0, 20);
+  const local = `${company}.${user}.r${suffix}`.slice(0, 63).replace(/\.+/g, '.').replace(/^\.+|\.+$/g, '');
+  return `${local}@deryi.local`;
+}
+
+async function buildRecoveryRecord(user, code, options = {}) {
+  const token = prettyRecoveryCode(code || randomRecoveryCode());
+  const tokenHash = await sha256Hex(cleanRecoveryCode(token));
+  const documentNumber = normalizeText(user.documentNumber || '');
+  const documentSalt = hashString(`${tokenHash}|${Date.now()}|${Math.random()}`);
+  const documentHash = await sha256Hex(`${documentSalt}|${documentNumber.toUpperCase()}`);
+  const username = cleanUsername(user.username || user.id || '');
+  const companyId = cleanCompanyCode(user.companyId || state.companyId);
+  const authEmail = normalizeText(user.authEmail || internalAuthEmail(companyId, username)).toLowerCase();
+  const newAuthEmail = recoveryAuthEmail(companyId, username, tokenHash);
+  const now = Date.now();
+  return {
+    code: token,
+    hash: tokenHash,
+    data: {
+      tokenHash,
+      companyId,
+      companyName: normalizeText(user.companyName || state.company?.name || companyId),
+      username,
+      name: normalizeText(user.name || username),
+      role: user.role || 'inventariador',
+      color: normalizeColor(user.color, 0),
+      contactEmail: normalizeText(user.contactEmail || user.email || '').toLowerCase(),
+      authEmail,
+      oldAuthEmail: authEmail,
+      newAuthEmail,
+      oldUid: normalizeText(user.uid || user.id || ''),
+      documentType: normalizeText(user.documentType || ''),
+      documentHint: maskDocument(documentNumber),
+      documentSalt,
+      documentHash,
+      active: true,
+      used: false,
+      revoked: false,
+      createdAt: serverTimestamp(),
+      createdAtMs: now,
+      createdByUid: options.createdByUid || state.user?.uid || '',
+      createdByEmail: options.createdByEmail || contactEmailOfCurrentUser(),
+      appVersion
+    }
+  };
+}
+
+async function saveRecoveryRecord(record) {
+  await setDoc(recoveryTokenDoc(record.hash), record.data, { merge: true });
+  return record;
+}
+
+async function createRecoveryForUser(user, options = {}) {
+  const record = await buildRecoveryRecord(user, null, options);
+  await saveRecoveryRecord(record);
+  return record;
+}
+
+async function qrDataUrl(text) {
+  if (!window.QRCode || !window.QRCode.toDataURL) throw new Error('No se pudo cargar la librería QR. Revisa internet y vuelve a abrir la app.');
+  return await window.QRCode.toDataURL(text, { width: 220, margin: 1, errorCorrectionLevel: 'M' });
+}
+
+async function downloadRecoveryPdf(user, code) {
+  if (!window.jspdf || !window.jspdf.jsPDF) throw new Error('No se pudo cargar la librería PDF.');
+  const { jsPDF } = window.jspdf;
+  const docPdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+  const pageWidth = docPdf.internal.pageSize.getWidth();
+  const margin = 38;
+  const companyName = normalizeText(user.companyName || state.company?.name || APP_NAME).toUpperCase();
+  const name = normalizeText(user.name || user.username || 'Usuario');
+  const username = cleanUsername(user.username || user.id || '');
+  const role = roleLabel(user.role || 'inventariador');
+  const contact = normalizeText(user.contactEmail || user.email || '').toLowerCase();
+  const docType = normalizeText(user.documentType || 'Documento');
+  const docHint = maskDocument(user.documentNumber || user.documentHint || '');
+  const token = prettyRecoveryCode(code);
+  const link = recoveryUrl(token);
+  const qr = await qrDataUrl(link);
+  const now = new Date().toLocaleString('es-EC');
+
+  docPdf.setFillColor(6, 36, 82);
+  docPdf.roundedRect(margin, 32, pageWidth - margin * 2, 62, 10, 10, 'F');
+  docPdf.setTextColor(255, 255, 255);
+  docPdf.setFont('helvetica', 'bold');
+  docPdf.setFontSize(18);
+  pdfText(docPdf, 'RECUPERACIÓN DE ACCESO', margin + 18, 62);
+  docPdf.setFontSize(11);
+  pdfText(docPdf, companyName, margin + 18, 82);
+
+  docPdf.setTextColor(15, 23, 42);
+  docPdf.setFontSize(10);
+  docPdf.setFont('helvetica', 'normal');
+  pdfText(docPdf, `Emitido: ${now}`, margin, 124);
+
+  docPdf.setDrawColor(203, 213, 225);
+  docPdf.setFillColor(248, 250, 252);
+  docPdf.roundedRect(margin, 145, pageWidth - margin * 2, 142, 10, 10, 'FD');
+  docPdf.setFont('helvetica', 'bold');
+  docPdf.setFontSize(10);
+  pdfText(docPdf, 'Datos del usuario', margin + 16, 170);
+  docPdf.setFont('helvetica', 'normal');
+  const rows = [
+    ['Nombre', name],
+    ['Usuario / nickname', username],
+    ['Rol', role],
+    ['Correo registrado', contact || '-'],
+    ['Documento', `${docType} ${docHint}`]
+  ];
+  let y = 193;
+  rows.forEach(([label, value]) => {
+    docPdf.setFont('helvetica', 'bold');
+    pdfText(docPdf, `${label}:`, margin + 16, y);
+    docPdf.setFont('helvetica', 'normal');
+    pdfText(docPdf, String(value || '-'), margin + 132, y);
+    y += 19;
+  });
+
+  docPdf.setFillColor(239, 246, 255);
+  docPdf.setDrawColor(147, 197, 253);
+  docPdf.roundedRect(margin, 310, pageWidth - margin * 2, 250, 10, 10, 'FD');
+  docPdf.setFont('helvetica', 'bold');
+  docPdf.setFontSize(12);
+  pdfText(docPdf, 'Código de recuperación', margin + 16, 338);
+  docPdf.setFontSize(16);
+  pdfText(docPdf, token, margin + 16, 370);
+  docPdf.addImage(qr, 'PNG', pageWidth - margin - 170, 330, 150, 150);
+  docPdf.setFont('helvetica', 'normal');
+  docPdf.setFontSize(8.5);
+  const instructions = [
+    'Guarda este documento en un lugar seguro. Este código permite crear una nueva contraseña para este usuario.',
+    'Para recuperar el acceso, abre la app, entra en Restablecer y escanea el QR o escribe el código manualmente.',
+    'Después de usarlo, el código queda invalidado. El administrador puede generar uno nuevo desde Usuarios.'
+  ];
+  let iy = 402;
+  instructions.forEach(line => {
+    const wrapped = docPdf.splitTextToSize(line, pageWidth - margin * 2 - 210);
+    pdfText(docPdf, wrapped, margin + 16, iy);
+    iy += wrapped.length * 11 + 4;
+  });
+
+  docPdf.setDrawColor(148, 163, 184);
+  docPdf.line(margin + 30, 650, pageWidth / 2 - 24, 650);
+  docPdf.line(pageWidth / 2 + 24, 650, pageWidth - margin - 30, 650);
+  docPdf.setFont('helvetica', 'bold');
+  docPdf.setFontSize(8);
+  pdfText(docPdf, 'Firma usuario', pageWidth / 4 + 2, 667, { align: 'center' });
+  pdfText(docPdf, 'Firma administrador', pageWidth * 0.75 - 2, 667, { align: 'center' });
+  docPdf.setFont('helvetica', 'normal');
+  docPdf.setFontSize(7);
+  docPdf.setTextColor(100, 116, 139);
+  pdfText(docPdf, `${APP_NAME} - ${appVersion}`, margin, 810);
+  docPdf.save(`${safeFileName(companyName)}_recuperacion_${safeFileName(username)}.pdf`);
+}
+
+async function validateRecoveryDocument(tokenData, documentNumber) {
+  const docInput = normalizeText(documentNumber).toUpperCase();
+  if (!docInput) throw new Error('Ingresa el número de documento para confirmar tu identidad.');
+  const proof = await sha256Hex(`${tokenData.documentSalt}|${docInput}`);
+  if (proof !== tokenData.documentHash) throw new Error('El documento no coincide con el código de recuperación.');
+}
+
+async function recoverAccessWithCode(codeInput, documentNumber, password) {
+  const code = prettyRecoveryCode(codeInput);
+  if (!code) throw new Error('Ingresa o escanea el código de recuperación.');
+  if (!password || password.length < 6) throw new Error('La nueva contraseña debe tener mínimo 6 caracteres.');
+  const tokenHash = await sha256Hex(cleanRecoveryCode(code));
+  const snap = await getDoc(recoveryTokenDoc(tokenHash));
+  if (!snap.exists()) throw new Error('Código inválido, revocado o ya utilizado.');
+  const token = snap.data();
+  if (token.active === false || token.used === true || token.revoked === true) throw new Error('Código inválido, revocado o ya utilizado.');
+  await validateRecoveryDocument(token, documentNumber);
+
+  const companyId = cleanCompanyCode(token.companyId);
+  const username = cleanUsername(token.username);
+  const newAuthEmail = normalizeText(token.newAuthEmail || recoveryAuthEmail(companyId, username, tokenHash)).toLowerCase();
+  pendingAuthSetup = true;
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, newAuthEmail, password);
+    const now = Date.now();
+    const profile = {
+      uid: cred.user.uid,
+      username,
+      name: token.name || username,
+      email: token.contactEmail || '',
+      contactEmail: token.contactEmail || '',
+      authEmail: newAuthEmail,
+      role: token.role || 'inventariador',
+      color: normalizeColor(token.color, 0),
+      active: true,
+      companyId,
+      companyName: token.companyName || companyId,
+      recoveredAt: serverTimestamp(),
+      recoveredAtMs: now,
+      recoveryTokenHash: tokenHash,
+      createdAt: serverTimestamp(),
+      createdAtMs: now,
+      lastLoginAt: serverTimestamp(),
+      lastLoginAtMs: now,
+      lastActiveAt: serverTimestamp(),
+      lastActiveAtMs: now,
+      isOnline: true
+    };
+    const batch = writeBatch(db);
+    batch.set(companyScopedDoc(companyId, 'allowedUsers', username), {
+      username,
+      name: profile.name,
+      email: profile.contactEmail,
+      contactEmail: profile.contactEmail,
+      authEmail: newAuthEmail,
+      uid: cred.user.uid,
+      active: true,
+      role: profile.role,
+      color: profile.color,
+      recoveryTokenHash: tokenHash,
+      recoveryUsedAt: serverTimestamp(),
+      recoveryUsedAtMs: now,
+      updatedAt: serverTimestamp(),
+      updatedAtMs: now
+    }, { merge: true });
+    batch.set(companyScopedDoc(companyId, 'users', cred.user.uid), profile, { merge: true });
+    if (token.oldUid) {
+      batch.set(companyScopedDoc(companyId, 'users', token.oldUid), {
+        active: false,
+        isOnline: false,
+        replacedByUid: cred.user.uid,
+        recoveryTokenHash: tokenHash,
+        recoveredAt: serverTimestamp(),
+        recoveredAtMs: now
+      }, { merge: true });
+    }
+    batch.set(loginIndexDoc(username), {
+      username,
+      updatedAt: serverTimestamp(),
+      updatedAtMs: now,
+      entries: { [companyId]: loginIndexEntry(companyId, username, { companyName: token.companyName || companyId, name: profile.name, role: profile.role, active: true, authEmail: newAuthEmail }) }
+    }, { merge: true });
+    batch.set(userIndexDoc(cred.user.uid), {
+      uid: cred.user.uid,
+      username,
+      email: profile.contactEmail,
+      contactEmail: profile.contactEmail,
+      authEmail: newAuthEmail,
+      name: profile.name,
+      role: profile.role,
+      active: true,
+      companyId,
+      companyName: token.companyName || companyId,
+      recoveryTokenHash: tokenHash,
+      createdAt: serverTimestamp(),
+      createdAtMs: now,
+      updatedAt: serverTimestamp(),
+      updatedAtMs: now
+    }, { merge: true });
+    batch.set(recoveryTokenDoc(tokenHash), {
+      used: true,
+      active: false,
+      usedByUid: cred.user.uid,
+      usedAt: serverTimestamp(),
+      usedAtMs: now
+    }, { merge: true });
+    await batch.commit();
+    pendingAuthSetup = false;
+    await startAppSession(cred.user);
+    return { companyId, username };
+  } catch (err) {
+    pendingAuthSetup = false;
+    if (String(err?.code || '').includes('auth/email-already-in-use')) throw new Error('Este código ya fue usado o quedó asociado a una recuperación anterior. Solicita al administrador que genere un nuevo PDF de recuperación.');
+    throw err;
+  }
+}
+
 async function copyTextToClipboard(text) {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
@@ -661,6 +997,11 @@ function applyAuthQueryParams() {
       const user = params.get('user') || params.get('username') || '';
       if ($('registerCompanyCode') && company) $('registerCompanyCode').value = company;
       if ($('registerUsername') && user) $('registerUsername').value = user;
+    }
+    if (params.get('auth') === 'recover') {
+      switchAuthTab('reset');
+      const token = params.get('token') || params.get('code') || '';
+      if ($('resetRecoveryCode') && token) $('resetRecoveryCode').value = prettyRecoveryCode(token);
     }
   } catch (err) {
     console.warn('No se pudieron aplicar parámetros de acceso', err);
@@ -708,7 +1049,9 @@ async function createCompany(companyName, adminData, contactEmail, password) {
       lastActiveAt: serverTimestamp(),
       lastActiveAtMs: now
     };
+    const recovery = await buildRecoveryRecord({ ...profile, uid: cred.user.uid, documentNumber: identity.documentNumber, documentType: identity.documentType }, null, { createdByUid: cred.user.uid, createdByEmail: contact });
     const batch = writeBatch(db);
+    batch.set(recoveryTokenDoc(recovery.hash), recovery.data, { merge: true });
     batch.set(doc(db, 'companies', companyId), {
       companyId,
       name,
@@ -749,6 +1092,9 @@ async function createCompany(companyName, adminData, contactEmail, password) {
       color: 0,
       active: true,
       uid: cred.user.uid,
+      recoveryTokenHash: recovery.hash,
+      recoveryIssuedAtMs: now,
+      recoveryActive: true,
       createdByUid: cred.user.uid,
       createdByEmail: contact,
       createdAt: serverTimestamp(),
@@ -776,7 +1122,7 @@ async function createCompany(companyName, adminData, contactEmail, password) {
       username,
       updatedAt: serverTimestamp(),
       updatedAtMs: now,
-      entries: { [companyId]: loginIndexEntry(companyId, username, { companyName: name, name: ownerName, role: 'owner', active: true }) }
+      entries: { [companyId]: loginIndexEntry(companyId, username, { companyName: name, name: ownerName, role: 'owner', active: true, authEmail }) }
     }, { merge: true });
     batch.set(companyScopedDoc(companyId, 'appMeta', 'current'), {
       companyId,
@@ -792,7 +1138,7 @@ async function createCompany(companyName, adminData, contactEmail, password) {
     await batch.commit();
     pendingAuthSetup = false;
     await startAppSession(cred.user);
-    return { companyId, username };
+    return { companyId, username, recoveryCode: recovery.code, recoveryUser: { ...profile, companyName: name, documentNumber: identity.documentNumber, documentType: identity.documentType } };
   } catch (err) {
     pendingAuthSetup = false;
     throw err;
@@ -853,7 +1199,7 @@ async function registerUser(usernameInput, password, companyCode) {
       username,
       updatedAt: serverTimestamp(),
       updatedAtMs: now,
-      entries: { [companyId]: loginIndexEntry(companyId, username, { companyName: company.name || companyId, name: profile.name, role: profile.role, active: profile.active }) }
+      entries: { [companyId]: loginIndexEntry(companyId, username, { companyName: company.name || companyId, name: profile.name, role: profile.role, active: profile.active, authEmail }) }
     }, { merge: true });
     batch.set(userIndexDoc(cred.user.uid), {
       uid: cred.user.uid,
@@ -1547,7 +1893,8 @@ function renderUsers() {
         <button class="btn" type="button" data-user-action="save">Guardar</button>
         <button class="btn secondary" type="button" data-user-action="history">Historial</button>
         <button class="btn secondary" type="button" data-user-action="invite">Enviar acceso</button>
-        <button class="btn secondary" type="button" data-user-action="reset">Reenviar acceso</button>
+        <button class="btn" type="button" data-user-action="recovery">PDF recuperación</button>
+        <button class="btn secondary" type="button" data-user-action="revoke-recovery">Revocar QR</button>
         <button class="btn danger" type="button" data-user-action="delete" ${isMainAdmin ? 'disabled' : ''}>Borrar usuario</button>
       </div>
     </article>`;
@@ -1608,8 +1955,9 @@ async function createAllowedUser() {
   if (!contactEmail) return showMessage($('userMessage'), 'Ingresa el correo de contacto.', 'warn');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) return showMessage($('userMessage'), 'Ingresa un correo de contacto válido.', 'warn');
   const authEmail = internalAuthEmail(state.companyId, username);
-  const invite = { name, username, email: contactEmail, contactEmail, authEmail, role, color };
+  const invite = { name, username, email: contactEmail, contactEmail, authEmail, role, color, documentType: identity.documentType, documentNumber: identity.documentNumber, companyId: state.companyId, companyName: state.company?.name || '' };
   const invitationUrl = createAccessUrl(username);
+  const recovery = await createRecoveryForUser(invite, { createdByUid: state.user.uid, createdByEmail: contactEmailOfCurrentUser() });
   await setDoc(companyDoc('allowedUsers', username), {
     username,
     name,
@@ -1628,6 +1976,9 @@ async function createAllowedUser() {
     companyId: state.companyId,
     companyName: state.company?.name || '',
     invitationUrl,
+    recoveryTokenHash: recovery.hash,
+    recoveryIssuedAtMs: Date.now(),
+    recoveryActive: true,
     invitedAt: serverTimestamp(),
     invitedAtMs: Date.now(),
     createdByUid: state.user.uid,
@@ -1638,12 +1989,14 @@ async function createAllowedUser() {
     updatedAtMs: Date.now(),
     appVersion
   }, { merge: true });
-  await upsertLoginIndex(username, state.companyId, { companyName: state.company?.name || '', name, role, active: true });
+  await upsertLoginIndex(username, state.companyId, { companyName: state.company?.name || '', name, role, active: true, authEmail });
   ['newUserFirstName','newUserSecondName','newUserPaternalSurname','newUserMaternalSurname','newUserDocumentNumber','newUserEmail'].forEach(id => { const el = $(id); if (el) el.value = ''; });
   const typeEl = $('newUserDocumentType');
   if (typeEl) typeEl.value = 'CEDULA';
   const preview = $('newUserGeneratedUsernamePreview');
   if (preview) preview.textContent = 'Usuario generado: complete los 4 campos del nombre.';
+  window.__lastRecoveryDownloads = window.__lastRecoveryDownloads || {};
+  window.__lastRecoveryDownloads[username] = { user: invite, code: recovery.code };
   $('newUserColor').value = String((color + 1) % 8);
   const msg = $('userMessage');
   showMessage(msg, `Usuario autorizado: ${username}. Código empresa: ${state.companyId}.`, 'info');
@@ -1657,6 +2010,7 @@ async function createAllowedUser() {
     <div class="invite-actions">
       <a class="btn secondary" href="${escapeHtml(invitationMailto(invite))}">Enviar invitación por correo</a>
       <button class="btn ghost" type="button" data-copy-invite="${escapeHtml(username)}">Copiar mensaje</button>
+      <button class="btn" type="button" data-download-new-recovery="${escapeHtml(username)}">Descargar PDF recuperación</button>
     </div>
     <div class="small">El usuario iniciará sesión escribiendo su usuario, seleccionando esta empresa y colocando su contraseña. El correo solo queda como contacto/invitación.</div>`;
 }
@@ -1779,6 +2133,63 @@ async function resetUserPassword(card) {
   if (!data.username) return;
   location.href = invitationMailto(data);
   showMessage($('userMessage'), `Se abrió nuevamente la invitación para ${data.username}. Si el usuario olvidó su contraseña y ya había creado acceso, la opción simple es crearle otro usuario/nickname o solicitar soporte para borrar la cuenta interna en Firebase Authentication.`, 'info');
+}
+
+async function generateRecoveryFromCard(card) {
+  const data = getUserCardData(card);
+  if (!data.username) return;
+  const original = state.allowedUsers?.[data.username] || {};
+  const registered = Object.values(state.registeredUsers || {}).find(u => cleanUsername(u.username) === data.username) || {};
+  const user = {
+    ...original,
+    ...data,
+    uid: data.uid || original.uid || registered.uid || registered.id || '',
+    companyId: state.companyId,
+    companyName: state.company?.name || '',
+    documentType: original.documentType || registered.documentType || '',
+    documentNumber: original.documentNumber || registered.documentNumber || '',
+    role: data.role || original.role || registered.role || 'inventariador',
+    color: data.color ?? original.color ?? registered.color ?? 0,
+    authEmail: data.authEmail || original.authEmail || registered.authEmail || internalAuthEmail(state.companyId, data.username)
+  };
+  if (!user.documentNumber) {
+    throw new Error('Este usuario no tiene documento registrado. No se puede generar recuperación segura.');
+  }
+  const recovery = await createRecoveryForUser(user, { createdByUid: state.user.uid, createdByEmail: contactEmailOfCurrentUser() });
+  await setDoc(companyDoc('allowedUsers', data.username), {
+    recoveryTokenHash: recovery.hash,
+    recoveryIssuedAtMs: Date.now(),
+    recoveryActive: true,
+    updatedAt: serverTimestamp(),
+    updatedAtMs: Date.now()
+  }, { merge: true });
+  await downloadRecoveryPdf(user, recovery.code);
+  showMessage($('userMessage'), `PDF de recuperación generado para ${data.username}. El código anterior queda reemplazado por este nuevo documento.`, 'info');
+}
+
+async function revokeRecoveryFromCard(card) {
+  const data = getUserCardData(card);
+  if (!data.username) return;
+  const original = state.allowedUsers?.[data.username] || {};
+  const hash = normalizeText(original.recoveryTokenHash || '');
+  if (!hash) return showMessage($('userMessage'), 'Este usuario no tiene código de recuperación activo registrado.', 'warn');
+  if (!confirm(`Se revocará el código/QR de recuperación de ${data.username}. ¿Continuar?`)) return;
+  await setDoc(recoveryTokenDoc(hash), {
+    active: false,
+    revoked: true,
+    revokedAt: serverTimestamp(),
+    revokedAtMs: Date.now(),
+    revokedByUid: state.user.uid,
+    revokedByEmail: contactEmailOfCurrentUser()
+  }, { merge: true });
+  await setDoc(companyDoc('allowedUsers', data.username), {
+    recoveryActive: false,
+    recoveryRevokedAt: serverTimestamp(),
+    recoveryRevokedAtMs: Date.now(),
+    updatedAt: serverTimestamp(),
+    updatedAtMs: Date.now()
+  }, { merge: true });
+  showMessage($('userMessage'), `Código de recuperación revocado para ${data.username}.`, 'warn');
 }
 
 function showUserHistory(card) {
@@ -2644,6 +3055,9 @@ function attachEvents() {
         documentNumber: getValue('companyAdminDocumentNumber')
       }, getValue('companyAdminEmail'), password);
       showMessage($('authMessage'), `Empresa creada correctamente. Código empresa: ${result.companyId}. Usuario administrador: ${result.username}`, 'info');
+      if (result.recoveryCode && result.recoveryUser) {
+        setTimeout(() => downloadRecoveryPdf(result.recoveryUser, result.recoveryCode).catch(err => console.warn('No se pudo descargar PDF recuperación', err)), 600);
+      }
     } catch (err) {
       showMessage($('authMessage'), 'Error al crear empresa: ' + err.message, 'danger');
     }
@@ -2653,10 +3067,11 @@ function attachEvents() {
   if (resetForm) resetForm.addEventListener('submit', async e => {
     e.preventDefault();
     try {
-      await sendLoginPasswordReset();
-      showMessage($('authMessage'), 'Solicita al administrador que te reenvíe el acceso o cree un nuevo usuario/nickname.', 'info');
+      const password = ensurePasswordsMatch('resetNewPassword', 'resetNewPasswordConfirm', 'Las contraseñas de recuperación');
+      const result = await recoverAccessWithCode(getValue('resetRecoveryCode'), getValue('resetDocumentNumber'), password);
+      showMessage($('authMessage'), `Contraseña cambiada correctamente para ${result.username}.`, 'info');
     } catch (err) {
-      showMessage($('authMessage'), err.message, 'warn');
+      showMessage($('authMessage'), 'Error al recuperar acceso: ' + err.message, 'danger');
     }
   });
 
@@ -2702,6 +3117,12 @@ function attachEvents() {
     if (factorBtn) openFactorModal(factorBtn.dataset.factorEdit);
     const copyInvite = e.target.closest('[data-copy-invite]');
     if (copyInvite) copyInviteForEmail(copyInvite.dataset.copyInvite).catch(err => showMessage($('userMessage'), 'No se pudo copiar: ' + err.message, 'danger'));
+    const newRecoveryBtn = e.target.closest('[data-download-new-recovery]');
+    if (newRecoveryBtn) {
+      const username = cleanUsername(newRecoveryBtn.dataset.downloadNewRecovery || '');
+      const item = window.__lastRecoveryDownloads?.[username];
+      if (item) downloadRecoveryPdf(item.user, item.code).catch(err => showMessage($('userMessage'), 'No se pudo descargar PDF: ' + err.message, 'danger'));
+    }
     const userAction = e.target.closest('[data-user-action]');
     if (userAction) {
       const action = userAction.dataset.userAction;
@@ -2709,7 +3130,9 @@ function attachEvents() {
       if (action === 'save') saveUserCard(card).catch(err => showMessage($('userMessage'), err.message, 'danger'));
       if (action === 'delete') deleteUserCard(card).catch(err => showMessage($('userMessage'), err.message, 'danger'));
       if (action === 'invite') sendUserInvite(card);
-      if (action === 'reset') resetUserPassword(card).catch(err => showMessage($('userMessage'), 'No se pudo enviar correo: ' + err.message, 'danger'));
+      if (action === 'reset') resetUserPassword(card).catch(err => showMessage($('userMessage'), 'No se pudo reenviar acceso: ' + err.message, 'danger'));
+      if (action === 'recovery') generateRecoveryFromCard(card).catch(err => showMessage($('userMessage'), 'No se pudo generar recuperación: ' + err.message, 'danger'));
+      if (action === 'revoke-recovery') revokeRecoveryFromCard(card).catch(err => showMessage($('userMessage'), 'No se pudo revocar recuperación: ' + err.message, 'danger'));
       if (action === 'history') showUserHistory(card);
       if (action === 'close-history') $('userHistoryPanel')?.classList.add('hidden');
     }

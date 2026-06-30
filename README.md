@@ -61,8 +61,19 @@ Si una empresa fue creada antes de esta versión y todavía no aparece al buscar
 - Tabla ajustada al ancho de hoja y área final para firma del responsable.
 
 
-## Versión v1.9.2 PDF y contraseñas
+## Versión v2.0 PDF y contraseñas
 - PDF sin marca de agua.
 - Empresa en encabezado grande y en mayúsculas.
 - Confirmación de contraseña en Crear empresa y Crear acceso.
 - Botones para mostrar/ocultar contraseña en Ingresar, Crear empresa y Crear acceso.
+
+## v2.0 Recuperación QR/PDF
+
+Esta versión agrega recuperación de acceso sin correo automático ni dominio propio:
+
+- Al crear una empresa se genera un PDF de recuperación para el administrador principal.
+- Al autorizar usuarios, el administrador puede descargar un PDF/QR de recuperación.
+- Desde Usuarios se puede generar un nuevo PDF de recuperación o revocar el QR actual.
+- En la pantalla Restablecer, el usuario puede abrir el QR o escribir el código manualmente, confirmar su documento y crear una nueva contraseña.
+
+Importante: el PDF/QR de recuperación debe guardarse en un lugar seguro. Quien tenga el código puede iniciar el proceso de recuperación para ese usuario.
