@@ -37,7 +37,7 @@ const getValue = (id, fallback = '') => {
 };
 const nf = new Intl.NumberFormat('es-EC', { maximumFractionDigits: 2 });
 const dtf = new Intl.DateTimeFormat('es-EC', { dateStyle: 'short', timeStyle: 'short' });
-const appVersion = 'Multiempresa v1.8.1 Login corregido - 2026-06-30';
+const appVersion = 'Multiempresa v1.9 PDF profesional - 2026-06-30';
 
 let app, auth, db;
 let unsubscribers = [];
@@ -2207,27 +2207,192 @@ function reportRows(onlyNovelties = false) {
   return rows;
 }
 
+function reportSummary(rows) {
+  const counted = rows.filter(r => r.physicalParts?.counted).length;
+  const faltantes = rows.filter(r => Number(r.diff) < 0).length;
+  const sobrantes = rows.filter(r => Number(r.diff) > 0).length;
+  const correctos = rows.filter(r => r.diff === 0).length;
+  const pendientes = rows.length - counted;
+  const systemTotal = rows.reduce((sum, r) => sum + (Number(r.totalUnits) || 0), 0);
+  const physicalTotal = rows.reduce((sum, r) => sum + (r.physicalParts?.counted ? (Number(r.physical) || 0) : 0), 0);
+  const diffTotal = Math.round((physicalTotal - systemTotal) * 100) / 100;
+  return { counted, faltantes, sobrantes, correctos, pendientes, systemTotal, physicalTotal, diffTotal };
+}
+
+function reportResponsible(rows) {
+  const names = [];
+  const seen = new Set();
+  for (const r of rows) {
+    const label = normalizeText(r.count?.updatedByName || r.count?.updatedByEmail || '');
+    if (!label) continue;
+    const key = normalizeKey(label);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    names.push(label);
+  }
+  if (!names.length) return state.profile?.name || contactEmailOfCurrentUser() || 'Sin usuario registrado';
+  if (names.length === 1) return names[0];
+  const shown = names.slice(0, 3).join(', ');
+  return names.length > 3 ? `Varios usuarios: ${shown} +${names.length - 3}` : `Varios usuarios: ${shown}`;
+}
+
+function latestCountDate(rows) {
+  return rows.reduce((max, r) => Math.max(max, Number(r.count?.updatedAtMs || 0)), 0);
+}
+
+function pdfText(doc, text, x, y, options = {}) {
+  doc.text(String(text ?? ''), x, y, options);
+}
+
 function generatePdf() {
   if (!window.jspdf || !window.jspdf.jsPDF) return alert('No se pudo cargar la librería PDF. Revisa internet.');
   const rows = reportRows(false);
   const lab = selectedExactLab() || 'Todos los laboratorios';
   const { jsPDF } = window.jspdf;
-  const docPdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+  const docPdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
   const now = new Date();
-  docPdf.setFontSize(16);
-  docPdf.text(`${APP_NAME} - Informe de conteo`, 40, 40);
-  docPdf.setFontSize(10);
-  docPdf.text(`Laboratorio: ${lab}`, 40, 60);
-  docPdf.text(`Generado: ${now.toLocaleString('es-EC')}`, 40, 76);
-  docPdf.text(`Usuario: ${state.profile?.name || contactEmailOfCurrentUser()}`, 40, 92);
+  const pageWidth = docPdf.internal.pageSize.getWidth();
+  const pageHeight = docPdf.internal.pageSize.getHeight();
+  const margin = 28;
+  const contentWidth = pageWidth - margin * 2;
+  const summary = reportSummary(rows);
+  const empresa = state.company?.name || APP_NAME;
+  const administrador = state.company?.ownerName || state.company?.ownerEmail || 'Sin administrador registrado';
+  const inventariador = reportResponsible(rows);
+  const fechaInventario = latestCountDate(rows) ? fmtDate(latestCountDate(rows)) : 'Sin conteo registrado';
+  const fechaCarga = state.meta?.loadedAtMs ? fmtDate(state.meta.loadedAtMs) : 'Sin carga registrada';
+  const fechaDocumento = now.toLocaleString('es-EC');
+  const archivoBase = state.meta?.fileName || 'Sin archivo registrado';
+
+  function drawFooter(pageNumber, totalPages) {
+    docPdf.setDrawColor(226, 232, 240);
+    docPdf.line(margin, pageHeight - 28, pageWidth - margin, pageHeight - 28);
+    docPdf.setFont('helvetica', 'normal');
+    docPdf.setFontSize(7);
+    docPdf.setTextColor(100, 116, 139);
+    pdfText(docPdf, `${APP_NAME} - ${appVersion}`, margin, pageHeight - 14);
+    pdfText(docPdf, `Página ${pageNumber} de ${totalPages}`, pageWidth - margin, pageHeight - 14, { align: 'right' });
+    docPdf.setTextColor(31, 41, 55);
+  }
+
+  function drawMainHeader() {
+    docPdf.setFillColor(6, 36, 82);
+    docPdf.roundedRect(margin, 22, contentWidth, 42, 8, 8, 'F');
+    docPdf.setTextColor(255, 255, 255);
+    docPdf.setFont('helvetica', 'bold');
+    docPdf.setFontSize(14);
+    pdfText(docPdf, 'INFORME DE INVENTARIO FISICO', margin + 14, 48);
+    docPdf.setFontSize(8);
+    docPdf.setFont('helvetica', 'normal');
+    pdfText(docPdf, empresa, pageWidth - margin - 14, 48, { align: 'right' });
+    docPdf.setTextColor(31, 41, 55);
+  }
+
+  function drawInfoBox() {
+    const y = 78;
+    docPdf.setDrawColor(191, 219, 254);
+    docPdf.setFillColor(239, 246, 255);
+    docPdf.roundedRect(margin, y, contentWidth, 82, 8, 8, 'FD');
+
+    const leftX = margin + 12;
+    const midX = margin + contentWidth / 2 + 6;
+    const labelGap = 11;
+    docPdf.setFontSize(7.6);
+    docPdf.setTextColor(71, 85, 105);
+
+    function info(label, value, x, yy) {
+      docPdf.setFont('helvetica', 'bold');
+      pdfText(docPdf, label, x, yy);
+      docPdf.setFont('helvetica', 'normal');
+      const lines = docPdf.splitTextToSize(String(value || '-'), contentWidth / 2 - 28);
+      pdfText(docPdf, lines, x, yy + labelGap);
+    }
+
+    info('Empresa', empresa, leftX, y + 16);
+    info('Administrador principal', administrador, leftX, y + 49);
+    info('Usuario inventariador', inventariador, midX, y + 16);
+    info('Laboratorio / filtro', lab, midX, y + 49);
+    docPdf.setTextColor(31, 41, 55);
+  }
+
+  function drawDatesBox() {
+    const y = 170;
+    docPdf.setDrawColor(226, 232, 240);
+    docPdf.setFillColor(248, 250, 252);
+    docPdf.roundedRect(margin, y, contentWidth, 58, 8, 8, 'FD');
+    docPdf.setFontSize(7.4);
+    docPdf.setTextColor(71, 85, 105);
+
+    const col = contentWidth / 3;
+    function item(label, value, x) {
+      docPdf.setFont('helvetica', 'bold');
+      pdfText(docPdf, label, x, y + 17);
+      docPdf.setFont('helvetica', 'normal');
+      const lines = docPdf.splitTextToSize(String(value || '-'), col - 14);
+      pdfText(docPdf, lines, x, y + 31);
+    }
+    item('Inventario cargado', fechaCarga, margin + 12);
+    item('Inventario/conteo generado', fechaInventario, margin + 12 + col);
+    item('Documento generado', fechaDocumento, margin + 12 + col * 2);
+    docPdf.setFont('helvetica', 'bold');
+    pdfText(docPdf, 'Archivo base', margin + 12, y + 51);
+    docPdf.setFont('helvetica', 'normal');
+    pdfText(docPdf, docPdf.splitTextToSize(archivoBase, contentWidth - 85), margin + 70, y + 51);
+    docPdf.setTextColor(31, 41, 55);
+  }
+
+  function drawSummaryCards() {
+    const y = 242;
+    const gap = 8;
+    const cardW = (contentWidth - gap * 4) / 5;
+    const cards = [
+      ['Productos', rows.length],
+      ['Contados', summary.counted],
+      ['Correctos', summary.correctos],
+      ['Faltantes', summary.faltantes],
+      ['Sobrantes', summary.sobrantes]
+    ];
+    cards.forEach((c, i) => {
+      const x = margin + i * (cardW + gap);
+      docPdf.setFillColor(i === 3 ? 254 : i === 4 ? 239 : i === 2 ? 240 : 248, i === 3 ? 242 : i === 4 ? 246 : i === 2 ? 253 : 250, i === 3 ? 242 : i === 4 ? 255 : i === 2 ? 244 : 252);
+      docPdf.setDrawColor(226, 232, 240);
+      docPdf.roundedRect(x, y, cardW, 42, 8, 8, 'FD');
+      docPdf.setFont('helvetica', 'bold');
+      docPdf.setFontSize(7.2);
+      docPdf.setTextColor(100, 116, 139);
+      pdfText(docPdf, c[0], x + 8, y + 14);
+      docPdf.setFontSize(13);
+      docPdf.setTextColor(15, 23, 42);
+      pdfText(docPdf, nf.format(c[1]), x + 8, y + 32);
+    });
+    docPdf.setTextColor(31, 41, 55);
+  }
+
+  drawMainHeader();
+  drawInfoBox();
+  drawDatesBox();
+  drawSummaryCards();
+
   if (!rows.length) {
-    docPdf.text('No hay artículos para el filtro actual.', 40, 120);
+    docPdf.setFont('helvetica', 'normal');
+    docPdf.setFontSize(10);
+    pdfText(docPdf, 'No hay artículos para el filtro actual.', margin, 320);
   } else {
     docPdf.autoTable({
-      startY: 112,
-      head: [['Laboratorio','Descripción','Unid/Entero','Sistema ent.','Sistema unid.','Sistema total','Físico ent.','Físico unid.','Físico total','Diferencia','Usuario','Fecha','Novedad']],
+      startY: 304,
+      margin: { left: margin, right: margin, top: 74, bottom: 62 },
+      tableWidth: contentWidth,
+      head: [[
+        'Lab', 'Descripción', 'Unid', 'S. ent', 'S. unid', 'S. total',
+        'F. ent', 'F. unid', 'F. total', 'Dif.', 'Usuario', 'Fecha', 'Novedad'
+      ]],
       body: rows.map(r => [
-        r.laboratorio, r.descripcion, String(r.unitsPerEntero), String(r.enteros), String(r.unidades), String(r.totalUnits),
+        r.laboratorio,
+        r.descripcion,
+        String(r.unitsPerEntero),
+        String(r.enteros),
+        String(r.unidades),
+        String(r.totalUnits),
         r.physicalParts.counted ? String(r.physicalParts.enteros || 0) : '',
         r.physicalParts.counted ? String(r.physicalParts.unidades || 0) : '',
         r.physicalParts.counted ? String(r.physical) : '',
@@ -2236,20 +2401,81 @@ function generatePdf() {
         r.count.updatedAtMs ? fmtDate(r.count.updatedAtMs) : '',
         r.novelty
       ]),
-      styles: { fontSize: 6.5, cellPadding: 3, overflow: 'linebreak' },
-      headStyles: { fillColor: [6, 36, 82] },
-      columnStyles: { 1: { cellWidth: 170 }, 0: { cellWidth: 85 }, 10: { cellWidth: 65 }, 11: { cellWidth: 55 } },
+      styles: {
+        font: 'helvetica',
+        fontSize: 5.2,
+        cellPadding: { top: 2.1, right: 1.8, bottom: 2.1, left: 1.8 },
+        overflow: 'linebreak',
+        valign: 'middle',
+        lineColor: [226, 232, 240],
+        lineWidth: 0.25,
+        textColor: [30, 41, 59]
+      },
+      headStyles: {
+        fillColor: [6, 36, 82],
+        textColor: [255, 255, 255],
+        fontStyle: 'bold',
+        fontSize: 5.5,
+        halign: 'center'
+      },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      columnStyles: {
+        0: { cellWidth: 52 },
+        1: { cellWidth: 120 },
+        2: { cellWidth: 23, halign: 'center' },
+        3: { cellWidth: 27, halign: 'right' },
+        4: { cellWidth: 27, halign: 'right' },
+        5: { cellWidth: 31, halign: 'right' },
+        6: { cellWidth: 27, halign: 'right' },
+        7: { cellWidth: 27, halign: 'right' },
+        8: { cellWidth: 31, halign: 'right' },
+        9: { cellWidth: 28, halign: 'right' },
+        10: { cellWidth: 47 },
+        11: { cellWidth: 50 },
+        12: { cellWidth: 49 }
+      },
       didParseCell: function(data) {
         if (data.section === 'body' && data.column.index === 9) {
           const v = Number(data.cell.raw);
-          if (v < 0) data.cell.styles.fillColor = [254,226,226];
-          if (v > 0) data.cell.styles.fillColor = [219,234,254];
-          if (v === 0 && data.cell.raw !== '') data.cell.styles.fillColor = [198,224,180];
+          if (v < 0) data.cell.styles.fillColor = [254, 226, 226];
+          if (v > 0) data.cell.styles.fillColor = [219, 234, 254];
+          if (v === 0 && data.cell.raw !== '') data.cell.styles.fillColor = [220, 252, 231];
+        }
+        if (data.section === 'body' && data.column.index === 12) {
+          const raw = String(data.cell.raw || '');
+          if (raw === 'Faltante') data.cell.styles.textColor = [153, 27, 27];
+          if (raw === 'Sobrante') data.cell.styles.textColor = [30, 64, 175];
+          if (raw === 'Sin diferencia') data.cell.styles.textColor = [21, 128, 61];
         }
       }
     });
   }
-  docPdf.save(`${safeFileName(state.company?.name || APP_NAME)}_inventario_${safeFileName(lab)}_${now.toISOString().slice(0,10)}.pdf`);
+
+  let finalY = docPdf.lastAutoTable?.finalY || 330;
+  if (finalY > pageHeight - 145) {
+    docPdf.addPage();
+    finalY = 90;
+  }
+  const signY = Math.max(finalY + 34, pageHeight - 128);
+  docPdf.setDrawColor(148, 163, 184);
+  docPdf.setLineWidth(0.6);
+  docPdf.line(margin + 78, signY + 38, pageWidth - margin - 78, signY + 38);
+  docPdf.setFont('helvetica', 'bold');
+  docPdf.setFontSize(8);
+  docPdf.setTextColor(51, 65, 85);
+  pdfText(docPdf, 'Firma del responsable', pageWidth / 2, signY + 52, { align: 'center' });
+  docPdf.setFont('helvetica', 'normal');
+  docPdf.setFontSize(7);
+  pdfText(docPdf, `Nombre: ${inventariador}`, pageWidth / 2, signY + 65, { align: 'center' });
+  pdfText(docPdf, `Fecha: ${fechaDocumento}`, pageWidth / 2, signY + 78, { align: 'center' });
+
+  const totalPages = docPdf.getNumberOfPages();
+  for (let i = 1; i <= totalPages; i++) {
+    docPdf.setPage(i);
+    drawFooter(i, totalPages);
+  }
+
+  docPdf.save(`${safeFileName(state.company?.name || APP_NAME)}_informe_inventario_${safeFileName(lab)}_${now.toISOString().slice(0,10)}.pdf`);
 }
 
 function exportCsv() {
