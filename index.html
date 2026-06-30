@@ -9,7 +9,7 @@
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="favicon.png" />
   <link rel="apple-touch-icon" href="assets/icons/icon-180.png" />
-  <link rel="stylesheet" href="styles.css?v=1.5" />
+  <link rel="stylesheet" href="styles.css?v=1.6" />
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
@@ -45,10 +45,24 @@
         <div class="notice info">Crea una empresa nueva. La persona registrada aquí quedará como administrador principal de esa empresa.</div>
         <label for="companyName">Nombre de empresa</label>
         <input id="companyName" required placeholder="Ej. Farmacia San José" />
-        <label for="companyAdminName">Nombre del administrador principal</label>
-        <input id="companyAdminName" required placeholder="Nombre y apellido" />
-        <label for="companyAdminUsername">Usuario / nickname del administrador</label>
-        <input id="companyAdminUsername" autocomplete="username" required placeholder="Ej. admin" />
+        <div class="notice info small">El usuario/nickname del administrador se genera automáticamente con sus nombres y apellidos.</div>
+        <label for="companyAdminFirstName">Primer nombre</label>
+        <input id="companyAdminFirstName" autocomplete="given-name" required placeholder="Ej. Adrian" />
+        <label for="companyAdminSecondName">Segundo nombre</label>
+        <input id="companyAdminSecondName" required placeholder="Ej. Antonio" />
+        <label for="companyAdminPaternalSurname">Apellido paterno</label>
+        <input id="companyAdminPaternalSurname" autocomplete="family-name" required placeholder="Ej. Yunga" />
+        <label for="companyAdminMaternalSurname">Apellido materno</label>
+        <input id="companyAdminMaternalSurname" required placeholder="Ej. Mora" />
+        <label for="companyAdminDocumentType">Tipo de documento</label>
+        <select id="companyAdminDocumentType" required>
+          <option value="CEDULA">Cédula</option>
+          <option value="RUC">RUC</option>
+          <option value="PASAPORTE">Pasaporte</option>
+        </select>
+        <label for="companyAdminDocumentNumber">Número de documento</label>
+        <input id="companyAdminDocumentNumber" required inputmode="text" maxlength="13" placeholder="Cédula 10 dígitos, RUC 13, pasaporte 3 a 13" />
+        <div id="companyGeneratedUsernamePreview" class="small generated-user-preview">Usuario generado: se mostrará al crear la empresa.</div>
         <label for="companyAdminEmail">Correo de contacto del administrador</label>
         <input id="companyAdminEmail" type="email" autocomplete="email" required placeholder="admin@empresa.com" />
         <label for="companyAdminPassword">Crear contraseña</label>
@@ -74,7 +88,7 @@
         <button type="submit" class="btn dark" style="width:100%; margin-top:12px;">Ver indicación</button>
       </form>
       <div id="authMessage" class="notice hidden"></div>
-      <div id="authAppVersion" class="app-version auth-version">Multiempresa v1.5 Selector empresa - 2026-06-29</div>
+      <div id="authAppVersion" class="app-version auth-version">Multiempresa v1.6 Documentos - 2026-06-29</div>
     </div>
   </section>
 
@@ -98,7 +112,7 @@
       <div class="side-bottom">
         <button id="installBtn" class="btn ghost hidden" type="button">Instalar app</button>
         <button id="logoutBtn" class="btn secondary" type="button">Cerrar sesión</button>
-        <div id="sideAppVersion" class="side-version">Multiempresa v1.5 Selector empresa - 2026-06-29</div>
+        <div id="sideAppVersion" class="side-version">Multiempresa v1.6 Documentos - 2026-06-29</div>
       </div>
     </nav>
 
@@ -249,6 +263,6 @@
     </div>
   </div>
 
-  <script type="module" src="app.js?v=1.5"></script>
+  <script type="module" src="app.js?v=1.6"></script>
 </body>
 </html>

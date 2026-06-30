@@ -37,7 +37,7 @@ const getValue = (id, fallback = '') => {
 };
 const nf = new Intl.NumberFormat('es-EC', { maximumFractionDigits: 2 });
 const dtf = new Intl.DateTimeFormat('es-EC', { dateStyle: 'short', timeStyle: 'short' });
-const appVersion = 'Multiempresa v1.5 Selector empresa - 2026-06-29';
+const appVersion = 'Multiempresa v1.6 Documentos - 2026-06-29';
 
 let app, auth, db;
 let unsubscribers = [];
@@ -129,6 +129,75 @@ function cleanUsername(value) {
     .replace(/[^a-z0-9._-]+/g, '')
     .replace(/^[-_.]+|[-_.]+$/g, '')
     .slice(0, 32);
+}
+
+function cleanNamePart(value) {
+  return normalizeText(value)
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z]/g, '');
+}
+
+function fullAdminName(data = {}) {
+  return [data.firstName, data.secondName, data.paternalSurname, data.maternalSurname]
+    .map(normalizeText)
+    .filter(Boolean)
+    .join(' ');
+}
+
+function validateAdminIdentity(data = {}) {
+  const firstName = normalizeText(data.firstName);
+  const secondName = normalizeText(data.secondName);
+  const paternalSurname = normalizeText(data.paternalSurname);
+  const maternalSurname = normalizeText(data.maternalSurname);
+  if (!cleanNamePart(firstName) || !cleanNamePart(secondName) || !cleanNamePart(paternalSurname) || !cleanNamePart(maternalSurname)) {
+    throw new Error('Debes llenar primer nombre, segundo nombre, apellido paterno y apellido materno para generar el usuario.');
+  }
+  const documentType = normalizeText(data.documentType || 'CEDULA').toUpperCase();
+  const rawDocument = normalizeText(data.documentNumber || '').toUpperCase();
+  let documentNumber = rawDocument.replace(/\s+/g, '');
+  if (documentType === 'CEDULA') {
+    if (!/^\d{10}$/.test(documentNumber)) throw new Error('La cédula debe tener exactamente 10 dígitos numéricos.');
+  } else if (documentType === 'RUC') {
+    if (!/^\d{13}$/.test(documentNumber)) throw new Error('El RUC debe tener exactamente 13 dígitos numéricos.');
+    if (!documentNumber.endsWith('001')) throw new Error('El RUC debe terminar en 001.');
+  } else if (documentType === 'PASAPORTE') {
+    if (!/^[A-Z0-9]{3,13}$/.test(documentNumber)) throw new Error('El pasaporte debe tener de 3 a 13 caracteres, solo letras y números, sin espacios ni símbolos.');
+  } else {
+    throw new Error('Selecciona un tipo de documento válido: Cédula, RUC o Pasaporte.');
+  }
+  return { firstName, secondName, paternalSurname, maternalSurname, documentType, documentNumber };
+}
+
+function generateNicknameBase(data = {}) {
+  const first = cleanNamePart(data.firstName);
+  const second = cleanNamePart(data.secondName);
+  const paternal = cleanNamePart(data.paternalSurname);
+  const maternal = cleanNamePart(data.maternalSurname);
+  if (!first || !second || !paternal || !maternal) return '';
+  return cleanUsername(`${first[0]}${second[0]}${paternal.slice(0, 5)}${maternal[0]}`);
+}
+
+async function nicknameExists(username) {
+  const clean = cleanUsername(username);
+  if (!clean) return true;
+  const snap = await getDoc(loginIndexDoc(clean));
+  return snap.exists();
+}
+
+async function generateAvailableNickname(identity) {
+  const base = generateNicknameBase(identity);
+  if (!base) throw new Error('No se pudo generar el usuario. Revisa nombres y apellidos.');
+  if (!(await nicknameExists(base))) return base;
+  const suffix = normalizeText(identity.documentNumber).toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 2);
+  if (!suffix || suffix.length < 2) throw new Error('No se pudo resolver el usuario duplicado porque el documento no tiene 2 caracteres válidos.');
+  const withDoc = cleanUsername(`${base}${suffix}`);
+  if (!(await nicknameExists(withDoc))) return withDoc;
+  for (let i = 2; i <= 99; i++) {
+    const candidate = cleanUsername(`${withDoc}${i}`);
+    if (!(await nicknameExists(candidate))) return candidate;
+  }
+  throw new Error('No se pudo generar un usuario único. Revisa el documento o contacta a soporte.');
 }
 
 function internalAuthEmail(companyId, username) {
@@ -566,12 +635,13 @@ function applyAuthQueryParams() {
   }
 }
 
-async function createCompany(companyName, adminName, adminUsername, contactEmail, password) {
+async function createCompany(companyName, adminData, contactEmail, password) {
   const name = normalizeText(companyName);
-  const ownerName = normalizeText(adminName);
-  const username = cleanUsername(adminUsername);
+  const identity = validateAdminIdentity(adminData || {});
+  const ownerName = fullAdminName(identity);
+  const username = await generateAvailableNickname(identity);
   const contact = normalizeText(contactEmail).toLowerCase();
-  if (!name || !ownerName || !username || !contact || !password) throw new Error('Completa empresa, administrador, usuario, correo de contacto y contraseña.');
+  if (!name || !ownerName || !username || !contact || !password) throw new Error('Completa empresa, datos del administrador, documento, correo de contacto y contraseña.');
   if (password.length < 6) throw new Error('La contraseña debe tener mínimo 6 caracteres.');
   const companyId = makeCompanyId(name, contact);
   const authEmail = internalAuthEmail(companyId, username);
@@ -582,6 +652,12 @@ async function createCompany(companyName, adminName, adminUsername, contactEmail
     const profile = {
       uid: cred.user.uid,
       name: ownerName,
+      firstName: identity.firstName,
+      secondName: identity.secondName,
+      paternalSurname: identity.paternalSurname,
+      maternalSurname: identity.maternalSurname,
+      documentType: identity.documentType,
+      documentNumber: identity.documentNumber,
       username,
       email: contact,
       contactEmail: contact,
@@ -610,6 +686,12 @@ async function createCompany(companyName, adminName, adminUsername, contactEmail
       ownerEmail: contact,
       ownerContactEmail: contact,
       ownerName,
+      ownerFirstName: identity.firstName,
+      ownerSecondName: identity.secondName,
+      ownerPaternalSurname: identity.paternalSurname,
+      ownerMaternalSurname: identity.maternalSurname,
+      ownerDocumentType: identity.documentType,
+      ownerDocumentNumber: identity.documentNumber,
       active: true,
       plan: 'base',
       createdAt: serverTimestamp(),
@@ -622,6 +704,12 @@ async function createCompany(companyName, adminName, adminUsername, contactEmail
     batch.set(companyScopedDoc(companyId, 'allowedUsers', username), {
       username,
       name: ownerName,
+      firstName: identity.firstName,
+      secondName: identity.secondName,
+      paternalSurname: identity.paternalSurname,
+      maternalSurname: identity.maternalSurname,
+      documentType: identity.documentType,
+      documentNumber: identity.documentNumber,
       email: contact,
       contactEmail: contact,
       authEmail,
@@ -672,7 +760,7 @@ async function createCompany(companyName, adminName, adminUsername, contactEmail
     await batch.commit();
     pendingAuthSetup = false;
     await startAppSession(cred.user);
-    return companyId;
+    return { companyId, username };
   } catch (err) {
     pendingAuthSetup = false;
     throw err;
@@ -2138,6 +2226,20 @@ async function updateCurrentUserPresence(isOnline = true) {
   } catch (err) { console.warn('No se pudo actualizar presencia', err); }
 }
 
+
+function updateGeneratedCompanyUsernamePreview() {
+  const el = $('companyGeneratedUsernamePreview');
+  if (!el) return;
+  const identity = {
+    firstName: getValue('companyAdminFirstName'),
+    secondName: getValue('companyAdminSecondName'),
+    paternalSurname: getValue('companyAdminPaternalSurname'),
+    maternalSurname: getValue('companyAdminMaternalSurname')
+  };
+  const base = generateNicknameBase(identity);
+  el.textContent = base ? `Usuario base generado: ${base}` : 'Usuario generado: complete los 4 campos del nombre.';
+}
+
 function startUserPresence() {
   stopUserPresence();
   updateCurrentUserPresence(true);
@@ -2152,6 +2254,11 @@ function stopUserPresence() {
 function attachEvents() {
   setVersionLabels();
   document.querySelectorAll('.auth-tab').forEach(btn => btn.addEventListener('click', () => switchAuthTab(btn.dataset.authTab)));
+  ['companyAdminFirstName','companyAdminSecondName','companyAdminPaternalSurname','companyAdminMaternalSurname'].forEach(id => {
+    const node = $(id);
+    if (node) node.addEventListener('input', updateGeneratedCompanyUsernamePreview);
+  });
+  updateGeneratedCompanyUsernamePreview();
   $('loginForm').addEventListener('submit', async e => {
     e.preventDefault();
     try {
@@ -2188,8 +2295,15 @@ function attachEvents() {
   if (createCompanyForm) createCompanyForm.addEventListener('submit', async e => {
     e.preventDefault();
     try {
-      const companyId = await createCompany(getValue('companyName'), getValue('companyAdminName'), getValue('companyAdminUsername'), getValue('companyAdminEmail'), getValue('companyAdminPassword'));
-      showMessage($('authMessage'), `Empresa creada correctamente. Código empresa: ${companyId}`, 'info');
+      const result = await createCompany(getValue('companyName'), {
+        firstName: getValue('companyAdminFirstName'),
+        secondName: getValue('companyAdminSecondName'),
+        paternalSurname: getValue('companyAdminPaternalSurname'),
+        maternalSurname: getValue('companyAdminMaternalSurname'),
+        documentType: getValue('companyAdminDocumentType'),
+        documentNumber: getValue('companyAdminDocumentNumber')
+      }, getValue('companyAdminEmail'), getValue('companyAdminPassword'));
+      showMessage($('authMessage'), `Empresa creada correctamente. Código empresa: ${result.companyId}. Usuario administrador: ${result.username}`, 'info');
     } catch (err) {
       showMessage($('authMessage'), 'Error al crear empresa: ' + err.message, 'danger');
     }
@@ -2347,7 +2461,7 @@ function authReady() {
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', async () => {
     try {
-      const registration = await navigator.serviceWorker.register('./sw.js?v=1.4');
+      const registration = await navigator.serviceWorker.register('./sw.js?v=1.6');
       registration.update?.();
       if (registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' });
       registration.addEventListener('updatefound', () => {
@@ -2360,8 +2474,8 @@ if ('serviceWorker' in navigator) {
         });
       });
       navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (!sessionStorage.getItem('swReloadedV13')) {
-          sessionStorage.setItem('swReloadedV13', '1');
+        if (!sessionStorage.getItem('swReloadedV16')) {
+          sessionStorage.setItem('swReloadedV16', '1');
           window.location.reload();
         }
       });
