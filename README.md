@@ -1,6 +1,6 @@
 # DERYI Empresarial Multiempresa
 
-Versión: Multiempresa v1.9 PDF profesional - 2026-06-30
+Versión: Multiempresa v1.9.1 PDF profesional - 2026-06-30
 
 ## Cambios principales
 
@@ -45,7 +45,7 @@ Si una empresa fue creada antes de esta versión y todavía no aparece al buscar
 ## Cambios v1.8
 - Instalación segura: si la app se abre desde Samsung Internet, se muestra una advertencia y se recomienda instalar desde Google Chrome para evitar el bloqueo de Play Protect por WebAPK con target SDK antiguo.
 - Manifest actualizado con `id`, `start_url` de PWA y `prefer_related_applications: false`.
-- Versión visible actualizada a Multiempresa v1.9 PDF profesional - 2026-06-30.
+- Versión visible actualizada a Multiempresa v1.9.1 PDF profesional - 2026-06-30.
 
 ## Recomendación de instalación Android
 1. Abrir la URL en Google Chrome.
@@ -54,7 +54,7 @@ Si una empresa fue creada antes de esta versión y todavía no aparece al buscar
 4. Evitar instalar desde Samsung Internet si Play Protect muestra bloqueo.
 
 
-## Cambios v1.9
+## Cambios v1.9.1
 
 - Informe PDF en hoja vertical A4.
 - Encabezado profesional con empresa, administrador, usuario inventariador, fechas y archivo base.

@@ -37,7 +37,7 @@ const getValue = (id, fallback = '') => {
 };
 const nf = new Intl.NumberFormat('es-EC', { maximumFractionDigits: 2 });
 const dtf = new Intl.DateTimeFormat('es-EC', { dateStyle: 'short', timeStyle: 'short' });
-const appVersion = 'Multiempresa v1.9 PDF profesional - 2026-06-30';
+const appVersion = 'Multiempresa v1.9.1 PDF marca de agua - 2026-06-30';
 
 let app, auth, db;
 let unsubscribers = [];
@@ -2244,7 +2244,8 @@ function pdfText(doc, text, x, y, options = {}) {
   doc.text(String(text ?? ''), x, y, options);
 }
 
-function generatePdf() {
+
+async function generatePdf() {
   if (!window.jspdf || !window.jspdf.jsPDF) return alert('No se pudo cargar la librería PDF. Revisa internet.');
   const rows = reportRows(false);
   const lab = selectedExactLab() || 'Todos los laboratorios';
@@ -2257,12 +2258,50 @@ function generatePdf() {
   const contentWidth = pageWidth - margin * 2;
   const summary = reportSummary(rows);
   const empresa = state.company?.name || APP_NAME;
+  const empresaEncabezado = String(empresa || APP_NAME).toUpperCase();
   const administrador = state.company?.ownerName || state.company?.ownerEmail || 'Sin administrador registrado';
   const inventariador = reportResponsible(rows);
   const fechaInventario = latestCountDate(rows) ? fmtDate(latestCountDate(rows)) : 'Sin conteo registrado';
   const fechaCarga = state.meta?.loadedAtMs ? fmtDate(state.meta.loadedAtMs) : 'Sin carga registrada';
   const fechaDocumento = now.toLocaleString('es-EC');
   const archivoBase = state.meta?.fileName || 'Sin archivo registrado';
+
+  async function loadWatermarkDataUrl() {
+    return await new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.naturalWidth;
+          canvas.height = img.naturalHeight;
+          const ctx = canvas.getContext('2d');
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.globalAlpha = 0.5;
+          ctx.drawImage(img, 0, 0);
+          resolve(canvas.toDataURL('image/png'));
+        } catch (err) {
+          resolve(null);
+        }
+      };
+      img.onerror = () => resolve(null);
+      img.src = `assets/logo.png?v=${encodeURIComponent(appVersion)}`;
+    });
+  }
+
+  const watermarkDataUrl = await loadWatermarkDataUrl();
+
+  function drawWatermark(pageNumber = 1) {
+    if (!watermarkDataUrl) return;
+    try {
+      const boxWidth = contentWidth * 0.72;
+      const boxHeight = boxWidth * 0.33;
+      const x = (pageWidth - boxWidth) / 2;
+      const y = pageNumber === 1 ? (pageHeight - boxHeight) / 2 - 6 : (pageHeight - boxHeight) / 2;
+      docPdf.addImage(watermarkDataUrl, 'PNG', x, y, boxWidth, boxHeight, undefined, 'FAST');
+    } catch (err) {
+      // Ignorar si el logo no puede renderizarse en el PDF.
+    }
+  }
 
   function drawFooter(pageNumber, totalPages) {
     docPdf.setDrawColor(226, 232, 240);
@@ -2276,20 +2315,29 @@ function generatePdf() {
   }
 
   function drawMainHeader() {
+    const boxY = 22;
+    const boxH = 56;
     docPdf.setFillColor(6, 36, 82);
-    docPdf.roundedRect(margin, 22, contentWidth, 42, 8, 8, 'F');
+    docPdf.roundedRect(margin, boxY, contentWidth, boxH, 8, 8, 'F');
     docPdf.setTextColor(255, 255, 255);
     docPdf.setFont('helvetica', 'bold');
     docPdf.setFontSize(14);
-    pdfText(docPdf, 'INFORME DE INVENTARIO FISICO', margin + 14, 48);
-    docPdf.setFontSize(8);
+    pdfText(docPdf, 'INFORME DE INVENTARIO FISICO', margin + 14, boxY + 22);
+
+    docPdf.setFont('helvetica', 'bold');
+    docPdf.setFontSize(16);
+    const companyLines = docPdf.splitTextToSize(empresaEncabezado, 250);
+    const startY = companyLines.length > 1 ? boxY + 20 : boxY + 30;
+    pdfText(docPdf, companyLines, pageWidth - margin - 14, startY, { align: 'right' });
+
     docPdf.setFont('helvetica', 'normal');
-    pdfText(docPdf, empresa, pageWidth - margin - 14, 48, { align: 'right' });
+    docPdf.setFontSize(8);
+    pdfText(docPdf, 'Documento profesional de conteo e inventario', margin + 14, boxY + 42);
     docPdf.setTextColor(31, 41, 55);
   }
 
   function drawInfoBox() {
-    const y = 78;
+    const y = 92;
     docPdf.setDrawColor(191, 219, 254);
     docPdf.setFillColor(239, 246, 255);
     docPdf.roundedRect(margin, y, contentWidth, 82, 8, 8, 'FD');
@@ -2308,7 +2356,7 @@ function generatePdf() {
       pdfText(docPdf, lines, x, yy + labelGap);
     }
 
-    info('Empresa', empresa, leftX, y + 16);
+    info('Empresa', empresaEncabezado, leftX, y + 16);
     info('Administrador principal', administrador, leftX, y + 49);
     info('Usuario inventariador', inventariador, midX, y + 16);
     info('Laboratorio / filtro', lab, midX, y + 49);
@@ -2316,7 +2364,7 @@ function generatePdf() {
   }
 
   function drawDatesBox() {
-    const y = 170;
+    const y = 184;
     docPdf.setDrawColor(226, 232, 240);
     docPdf.setFillColor(248, 250, 252);
     docPdf.roundedRect(margin, y, contentWidth, 58, 8, 8, 'FD');
@@ -2342,7 +2390,7 @@ function generatePdf() {
   }
 
   function drawSummaryCards() {
-    const y = 242;
+    const y = 256;
     const gap = 8;
     const cardW = (contentWidth - gap * 4) / 5;
     const cards = [
@@ -2368,6 +2416,7 @@ function generatePdf() {
     docPdf.setTextColor(31, 41, 55);
   }
 
+  drawWatermark(1);
   drawMainHeader();
   drawInfoBox();
   drawDatesBox();
@@ -2376,10 +2425,10 @@ function generatePdf() {
   if (!rows.length) {
     docPdf.setFont('helvetica', 'normal');
     docPdf.setFontSize(10);
-    pdfText(docPdf, 'No hay artículos para el filtro actual.', margin, 320);
+    pdfText(docPdf, 'No hay artículos para el filtro actual.', margin, 336);
   } else {
     docPdf.autoTable({
-      startY: 304,
+      startY: 318,
       margin: { left: margin, right: margin, top: 74, bottom: 62 },
       tableWidth: contentWidth,
       head: [[
@@ -2447,13 +2496,17 @@ function generatePdf() {
           if (raw === 'Sobrante') data.cell.styles.textColor = [30, 64, 175];
           if (raw === 'Sin diferencia') data.cell.styles.textColor = [21, 128, 61];
         }
+      },
+      willDrawPage: function(data) {
+        if (data.pageNumber > 1) drawWatermark(data.pageNumber);
       }
     });
   }
 
-  let finalY = docPdf.lastAutoTable?.finalY || 330;
+  let finalY = docPdf.lastAutoTable?.finalY || 344;
   if (finalY > pageHeight - 145) {
     docPdf.addPage();
+    drawWatermark(docPdf.getNumberOfPages());
     finalY = 90;
   }
   const signY = Math.max(finalY + 34, pageHeight - 128);
