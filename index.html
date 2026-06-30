@@ -9,7 +9,7 @@
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="favicon.png" />
   <link rel="apple-touch-icon" href="assets/icons/icon-180.png" />
-  <link rel="stylesheet" href="styles.css?v=1.6" />
+  <link rel="stylesheet" href="styles.css?v=1.8" />
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
@@ -88,7 +88,7 @@
         <button type="submit" class="btn dark" style="width:100%; margin-top:12px;">Ver indicación</button>
       </form>
       <div id="authMessage" class="notice hidden"></div>
-      <div id="authAppVersion" class="app-version auth-version">Multiempresa v1.7 Usuarios documentos - 2026-06-29</div>
+      <div id="authAppVersion" class="app-version auth-version">Multiempresa v1.8 Instalación segura - 2026-06-30</div>
     </div>
   </section>
 
@@ -111,8 +111,9 @@
       <button class="tab-btn support-only hidden" data-tab="soporte">Soporte</button>
       <div class="side-bottom">
         <button id="installBtn" class="btn ghost hidden" type="button">Instalar app</button>
+        <div id="installNotice" class="install-notice hidden"></div>
         <button id="logoutBtn" class="btn secondary" type="button">Cerrar sesión</button>
-        <div id="sideAppVersion" class="side-version">Multiempresa v1.7 Usuarios documentos - 2026-06-29</div>
+        <div id="sideAppVersion" class="side-version">Multiempresa v1.8 Instalación segura - 2026-06-30</div>
       </div>
     </nav>
 
@@ -268,6 +269,6 @@
     </div>
   </div>
 
-  <script type="module" src="app.js?v=1.6"></script>
+  <script type="module" src="app.js?v=1.8"></script>
 </body>
 </html>

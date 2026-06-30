@@ -1,9 +1,9 @@
-const CACHE_NAME = 'deryi-empresarial-multiempresa-v1-7-usuarios-documentos';
+const CACHE_NAME = 'deryi-empresarial-multiempresa-v1-8-instalacion-segura';
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css?v=1.6',
-  './app.js?v=1.6',
+  './styles.css?v=1.8',
+  './app.js?v=1.8',
   './firebase-config.js',
   './manifest.json',
   './favicon.png',

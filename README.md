@@ -1,6 +1,6 @@
 # DERYI Empresarial Multiempresa
 
-Versión: Multiempresa v1.7 Usuarios documentos - 2026-06-29
+Versión: Multiempresa v1.8 Instalación segura - 2026-06-30
 
 ## Cambios principales
 
@@ -40,3 +40,15 @@ Si una empresa fue creada antes de esta versión y todavía no aparece al buscar
 ## Cambios v1.7
 - La creación de usuarios ahora solicita nombres, apellidos y documento.
 - El usuario/nickname se genera automáticamente con la misma regla usada para el administrador principal.
+
+
+## Cambios v1.8
+- Instalación segura: si la app se abre desde Samsung Internet, se muestra una advertencia y se recomienda instalar desde Google Chrome para evitar el bloqueo de Play Protect por WebAPK con target SDK antiguo.
+- Manifest actualizado con `id`, `start_url` de PWA y `prefer_related_applications: false`.
+- Versión visible actualizada a Multiempresa v1.8 Instalación segura - 2026-06-30.
+
+## Recomendación de instalación Android
+1. Abrir la URL en Google Chrome.
+2. Tocar menú ⋮.
+3. Elegir Instalar app.
+4. Evitar instalar desde Samsung Internet si Play Protect muestra bloqueo.

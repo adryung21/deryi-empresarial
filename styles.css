@@ -733,3 +733,15 @@ button.support-only[hidden],
   text-align: center;
 }
 .link-button:hover { color: var(--brand-dark); }
+
+
+.install-notice {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--muted);
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 14px;
+  padding: 10px 12px;
+  text-align: center;
+}

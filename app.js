@@ -37,7 +37,7 @@ const getValue = (id, fallback = '') => {
 };
 const nf = new Intl.NumberFormat('es-EC', { maximumFractionDigits: 2 });
 const dtf = new Intl.DateTimeFormat('es-EC', { dateStyle: 'short', timeStyle: 'short' });
-const appVersion = 'Multiempresa v1.7 Usuarios documentos - 2026-06-29';
+const appVersion = 'Multiempresa v1.8 Instalación segura - 2026-06-30';
 
 let app, auth, db;
 let unsubscribers = [];
@@ -423,6 +423,41 @@ function showMessage(el, message, type = 'info') {
   el.className = `notice ${type === 'danger' ? 'danger' : type === 'warn' ? 'warn' : type === 'info' ? 'info' : ''}`.trim();
   el.textContent = message;
   el.classList.remove('hidden');
+}
+
+function isSamsungInternet() {
+  return /SamsungBrowser/i.test(navigator.userAgent || '');
+}
+
+function currentAppUrl() {
+  return window.location.href.split('#')[0];
+}
+
+function showInstallGuidance() {
+  const msg = 'Para evitar el bloqueo de Google Play Protect, instala esta PWA desde Google Chrome: abre la misma URL en Chrome, toca el menú ⋮ y elige “Instalar app”. En Samsung Internet algunos dispositivos generan una instalación compatible con Android antiguo y Play Protect la bloquea.';
+  const notice = $('installNotice');
+  if (notice) {
+    notice.textContent = msg;
+    notice.classList.remove('hidden');
+  }
+  alert(msg + '
+
+URL:
+' + currentAppUrl());
+}
+
+function prepareInstallButton() {
+  const btn = $('installBtn');
+  if (!btn) return;
+  if (isSamsungInternet()) {
+    btn.textContent = 'Instalar desde Chrome';
+    btn.classList.remove('hidden');
+    const notice = $('installNotice');
+    if (notice) {
+      notice.textContent = 'En Samsung Internet la instalación puede ser bloqueada por Play Protect. Usa Google Chrome para instalar.';
+      notice.classList.remove('hidden');
+    }
+  }
 }
 
 function clearMessage(el) {
@@ -2436,13 +2471,30 @@ function attachEvents() {
   window.addEventListener('online', () => $('syncState').textContent = 'En línea');
   window.addEventListener('offline', () => $('syncState').textContent = 'Sin conexión');
 
+  prepareInstallButton();
   window.addEventListener('beforeinstallprompt', e => {
     e.preventDefault();
+    if (isSamsungInternet()) {
+      deferredInstallPrompt = null;
+      prepareInstallButton();
+      return;
+    }
     deferredInstallPrompt = e;
-    $('installBtn').classList.remove('hidden');
+    const btn = $('installBtn');
+    if (btn) {
+      btn.textContent = 'Instalar app';
+      btn.classList.remove('hidden');
+    }
   });
   $('installBtn').addEventListener('click', async () => {
-    if (!deferredInstallPrompt) return;
+    if (isSamsungInternet()) {
+      showInstallGuidance();
+      return;
+    }
+    if (!deferredInstallPrompt) {
+      showInstallGuidance();
+      return;
+    }
     deferredInstallPrompt.prompt();
     await deferredInstallPrompt.userChoice;
     deferredInstallPrompt = null;
@@ -2512,8 +2564,8 @@ if ('serviceWorker' in navigator) {
         });
       });
       navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (!sessionStorage.getItem('swReloadedV16')) {
-          sessionStorage.setItem('swReloadedV16', '1');
+        if (!sessionStorage.getItem('swReloadedV18')) {
+          sessionStorage.setItem('swReloadedV18', '1');
           window.location.reload();
         }
       });
