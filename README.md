@@ -1,15 +1,16 @@
 # DERYI Empresarial Multiempresa
 
-Versión: Multiempresa v1.4 Usuario - 2026-06-29
+Versión: Multiempresa v1.5 Selector empresa - 2026-06-29
 
 ## Cambios principales
 
-- Inicio de sesión con Código de empresa + Usuario/Nickname + Contraseña.
+- Inicio de sesión con Usuario/Nickname → Buscar empresas → Seleccionar empresa → Contraseña.
+- Si el mismo nickname existe en varias empresas, el usuario elige en cuál entrar.
+- El rol se carga por empresa: puede ser inventariador en una empresa y administrador en otra.
+- Se mantiene una opción secundaria “Ingresar con código / soporte” para empresas creadas antes de esta versión o soporte técnico.
 - El correo queda como correo de contacto e invitación, no como identificador único de acceso.
-- Un mismo correo de contacto puede usarse en diferentes empresas sin causar `auth/email-already-in-use`.
-- Los administradores crean usuarios con nombre, nickname, correo de contacto, rol y color.
-- La invitación incluye código de empresa, usuario/nickname y enlace directo a Crear acceso.
-- Recuperación simple: el administrador reenvía la invitación o crea un nuevo usuario/nickname si el usuario olvidó la contraseña.
+- La invitación sigue llevando enlace directo a Crear acceso.
+- Se agregó índice `loginIndex` para que la app pueda encontrar empresas por nickname.
 
 ## Archivos importantes
 
@@ -25,4 +26,8 @@ Versión: Multiempresa v1.4 Usuario - 2026-06-29
 
 1. Reemplazar archivos en la raíz del repositorio.
 2. Copiar `firestore.rules` en Firebase → Firestore Database → Rules → Publicar.
-3. Abrir la app con `?v=14` para evitar caché anterior.
+3. Abrir la app con `?v=15` para evitar caché anterior.
+
+## Nota de compatibilidad
+
+Si una empresa fue creada antes de esta versión y todavía no aparece al buscar por usuario, entra una vez usando “Ingresar con código / soporte”. Al ingresar como administrador, la app sincroniza automáticamente los usuarios de esa empresa al nuevo índice de búsqueda.

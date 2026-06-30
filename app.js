@@ -21,6 +21,7 @@ import {
   setDoc,
   updateDoc,
   deleteDoc,
+  deleteField,
   writeBatch,
   runTransaction,
   onSnapshot,
@@ -36,7 +37,7 @@ const getValue = (id, fallback = '') => {
 };
 const nf = new Intl.NumberFormat('es-EC', { maximumFractionDigits: 2 });
 const dtf = new Intl.DateTimeFormat('es-EC', { dateStyle: 'short', timeStyle: 'short' });
-const appVersion = 'Multiempresa v1.4 Usuario - 2026-06-29';
+const appVersion = 'Multiempresa v1.5 Selector empresa - 2026-06-29';
 
 let app, auth, db;
 let unsubscribers = [];
@@ -180,6 +181,10 @@ function companyDoc(name, id) {
 
 function userIndexDoc(uid) {
   return doc(db, 'userCompanyIndex', uid);
+}
+
+function loginIndexDoc(username) {
+  return doc(db, 'loginIndex', cleanUsername(username));
 }
 
 function isSupportEmail(email) {
@@ -366,10 +371,112 @@ function switchAuthTab(tab) {
   clearMessage($('authMessage'));
 }
 
+
+function loginIndexEntry(companyId, username, source = {}) {
+  return {
+    companyId,
+    companyName: normalizeText(source.companyName || state.company?.name || companyId),
+    username: cleanUsername(username),
+    role: source.role || 'inventariador',
+    active: source.active !== false,
+    updatedAtMs: Date.now()
+  };
+}
+
+async function upsertLoginIndex(usernameInput, companyIdInput, source = {}) {
+  const username = cleanUsername(usernameInput);
+  const companyId = cleanCompanyCode(companyIdInput);
+  if (!username || !companyId) return;
+  const entry = loginIndexEntry(companyId, username, source);
+  await setDoc(loginIndexDoc(username), {
+    username,
+    updatedAt: serverTimestamp(),
+    updatedAtMs: Date.now(),
+    entries: { [companyId]: entry }
+  }, { merge: true });
+}
+
+async function removeLoginIndexEntry(usernameInput, companyIdInput) {
+  const username = cleanUsername(usernameInput);
+  const companyId = cleanCompanyCode(companyIdInput);
+  if (!username || !companyId) return;
+  try {
+    await updateDoc(loginIndexDoc(username), {
+      [`entries.${companyId}`]: deleteField(),
+      updatedAt: serverTimestamp(),
+      updatedAtMs: Date.now()
+    });
+  } catch (err) {
+    console.warn('No se pudo limpiar índice de ingreso', err);
+  }
+}
+
+async function findCompaniesForUsername(usernameInput) {
+  const username = cleanUsername(usernameInput);
+  if (!username) throw new Error('Ingresa tu usuario/nickname para buscar empresas.');
+  const snap = await getDoc(loginIndexDoc(username));
+  if (!snap.exists()) return [];
+  const entries = snap.data().entries || {};
+  return Object.values(entries)
+    .filter(e => e && e.active !== false && cleanUsername(e.username || username) === username)
+    .sort((a, b) => normalizeText(a.companyName || a.companyId).localeCompare(normalizeText(b.companyName || b.companyId), 'es'));
+}
+
+function selectedLoginCompanyId() {
+  const selected = cleanCompanyCode(getValue('loginSelectedCompanyId'));
+  const manual = cleanCompanyCode(getValue('loginCompanyCode'));
+  return manual || selected;
+}
+
+function clearLoginCompanySelection(keepManual = false) {
+  const selected = $('loginSelectedCompanyId');
+  const results = $('loginCompanyResults');
+  if (selected) selected.value = '';
+  if (results) results.innerHTML = '';
+  if (!keepManual && $('loginCompanyCode')) $('loginCompanyCode').value = '';
+}
+
+function renderLoginCompanyResults(companies, username) {
+  const box = $('loginCompanyResults');
+  const selected = $('loginSelectedCompanyId');
+  if (!box || !selected) return;
+  selected.value = '';
+  if (!companies.length) {
+    box.innerHTML = '<div class="notice warn">No encontré empresas para ese usuario. Revisa el usuario o usa el enlace de invitación. Si es una empresa creada antes de esta versión, usa “Ingresar con código”.</div>';
+    return;
+  }
+  const lastKey = `multi_login_company_${cleanUsername(username)}`;
+  let last = '';
+  try { last = localStorage.getItem(lastKey) || ''; } catch {}
+  const auto = companies.find(c => c.companyId === last) || (companies.length === 1 ? companies[0] : null);
+  if (auto) selected.value = auto.companyId;
+  box.innerHTML = `
+    <div class="login-company-list">
+      ${companies.map(c => {
+        const active = auto && auto.companyId === c.companyId;
+        return `<button class="login-company-option ${active ? 'selected' : ''}" type="button" data-login-company="${escapeHtml(c.companyId)}">
+          <strong>${escapeHtml(c.companyName || c.companyId)}</strong>
+          <span>${escapeHtml(roleLabel(c.role || 'inventariador'))}</span>
+        </button>`;
+      }).join('')}
+    </div>
+    <div class="small">Selecciona la empresa donde quieres ingresar. El rol se aplicará según esa empresa.</div>`;
+}
+
+async function searchLoginCompanies() {
+  const username = cleanUsername(getValue('loginUsername'));
+  const box = $('loginCompanyResults');
+  if (!username) return showMessage($('authMessage'), 'Ingresa tu usuario/nickname para buscar empresas.', 'warn');
+  if (box) box.innerHTML = '<div class="notice info">Buscando empresas autorizadas...</div>';
+  const companies = await findCompaniesForUsername(username);
+  renderLoginCompanyResults(companies, username);
+  if (companies.length) clearMessage($('authMessage'));
+}
+
 async function login(companyCode, username, password) {
   const code = cleanCompanyCode(companyCode);
   const user = cleanUsername(username);
-  if (!code || !user || !password) throw new Error('Ingresa código de empresa, usuario y contraseña.');
+  if (!code || !user || !password) throw new Error('Ingresa usuario, selecciona empresa y escribe contraseña.');
   // Acceso técnico oculto: código "soporte" y correo real como usuario.
   const authEmail = ['soporte', 'support'].includes(code) && String(username).includes('@')
     ? normalizeText(username).toLowerCase()
@@ -406,7 +513,8 @@ function invitationEmailText(user) {
 
 Te autorizaron para usar ${APP_NAME} en la empresa ${companyName}.
 
-Código de empresa: ${code}
+Empresa: ${companyName}
+Código interno de empresa: ${code}
 Usuario: ${username}
 Rol asignado: ${role}
 Correo de contacto: ${contactEmail || '-'}
@@ -414,7 +522,7 @@ Correo de contacto: ${contactEmail || '-'}
 Para crear tu acceso, abre este enlace:
 ${link}
 
-En la pantalla Crear acceso, usa el código de empresa y tu usuario/nickname. Luego crea tu contraseña.
+El enlace completará la empresa y tu usuario/nickname. Luego crea tu contraseña. Para ingresar después, escribe tu usuario, elige la empresa y coloca tu contraseña.
 
 Este mensaje fue generado desde ${APP_NAME}.`;
 }
@@ -544,6 +652,12 @@ async function createCompany(companyName, adminName, adminUsername, contactEmail
       updatedAt: serverTimestamp(),
       updatedAtMs: now
     });
+    batch.set(loginIndexDoc(username), {
+      username,
+      updatedAt: serverTimestamp(),
+      updatedAtMs: now,
+      entries: { [companyId]: loginIndexEntry(companyId, username, { companyName: name, name: ownerName, role: 'owner', active: true }) }
+    }, { merge: true });
     batch.set(companyScopedDoc(companyId, 'appMeta', 'current'), {
       companyId,
       companyName: name,
@@ -615,6 +729,12 @@ async function registerUser(usernameInput, password, companyCode) {
     const batch = writeBatch(db);
     batch.set(companyScopedDoc(companyId, 'users', cred.user.uid), profile, { merge: true });
     batch.set(companyScopedDoc(companyId, 'allowedUsers', username), { uid: cred.user.uid, authEmail, registeredAt: serverTimestamp(), registeredAtMs: now }, { merge: true });
+    batch.set(loginIndexDoc(username), {
+      username,
+      updatedAt: serverTimestamp(),
+      updatedAtMs: now,
+      entries: { [companyId]: loginIndexEntry(companyId, username, { companyName: company.name || companyId, name: profile.name, role: profile.role, active: profile.active }) }
+    }, { merge: true });
     batch.set(userIndexDoc(cred.user.uid), {
       uid: cred.user.uid,
       username,
@@ -861,6 +981,7 @@ function attachRealtimeListeners() {
   if (isAdmin()) {
     unsubscribers.push(onSnapshot(query(companyCollection('allowedUsers'), orderBy('username')), snap => {
       state.allowedUsers = Object.fromEntries(snap.docs.map(d => [d.id, { id: d.id, ...d.data() }]));
+      scheduleLoginIndexSync();
       renderUsers();
     }));
     unsubscribers.push(onSnapshot(companyCollection('users'), snap => {
@@ -1176,6 +1297,31 @@ function renderLockBanner(lab) {
   }
 }
 
+
+let loginIndexSyncTimer = null;
+function scheduleLoginIndexSync() {
+  if (!isAdmin() || !state.companyId) return;
+  if (loginIndexSyncTimer) clearTimeout(loginIndexSyncTimer);
+  loginIndexSyncTimer = setTimeout(() => {
+    syncCompanyLoginIndex().catch(err => console.warn('No se pudo sincronizar índice de ingreso', err));
+  }, 1200);
+}
+
+async function syncCompanyLoginIndex() {
+  if (!isAdmin() || !state.companyId) return;
+  const users = Object.values(state.allowedUsers || {});
+  for (const u of users) {
+    const username = cleanUsername(u.username || u.id || '');
+    if (!username || u.active === false) continue;
+    await upsertLoginIndex(username, state.companyId, {
+      companyName: state.company?.name || state.companyId,
+      name: u.name || username,
+      role: u.role || 'inventariador',
+      active: u.active !== false
+    });
+  }
+}
+
 function registeredByUsername() {
   const byUser = new Map();
   for (const u of Object.values(state.registeredUsers || {})) {
@@ -1356,6 +1502,7 @@ async function createAllowedUser() {
     updatedAtMs: Date.now(),
     appVersion
   }, { merge: true });
+  await upsertLoginIndex(username, state.companyId, { companyName: state.company?.name || '', name, role, active: true });
   $('newUserName').value = '';
   $('newUserUsername').value = '';
   $('newUserEmail').value = '';
@@ -1371,7 +1518,7 @@ async function createAllowedUser() {
       <a class="btn secondary" href="${escapeHtml(invitationMailto(invite))}">Enviar invitación por correo</a>
       <button class="btn ghost" type="button" data-copy-invite="${escapeHtml(username)}">Copiar mensaje</button>
     </div>
-    <div class="small">El usuario iniciará sesión con código de empresa + usuario + contraseña. El correo solo queda como contacto/invitación.</div>`;
+    <div class="small">El usuario iniciará sesión escribiendo su usuario, seleccionando esta empresa y colocando su contraseña. El correo solo queda como contacto/invitación.</div>`;
 }
 
 async function copyInviteForEmail(username) {
@@ -1431,6 +1578,7 @@ async function saveUserCard(card) {
     updatedAt: serverTimestamp(),
     updatedAtMs: Date.now()
   }, { merge: true });
+  await upsertLoginIndex(data.username, state.companyId, { companyName: state.company?.name || '', name: data.name, role: data.role, active: data.active });
   if (data.uid) {
     await setDoc(companyDoc('users', data.uid), {
       username: data.username,
@@ -1469,6 +1617,7 @@ async function deleteUserCard(card) {
   if (!data.username || original.role === 'owner') return;
   if (!confirm(`Se borrará el usuario ${data.username} del aplicativo. Se eliminará su autorización y perfil de la app. La cuenta interna de Firebase Authentication no se borra desde GitHub Pages. ¿Continuar?`)) return;
   await deleteDoc(companyDoc('allowedUsers', data.username));
+  await removeLoginIndexEntry(data.username, state.companyId);
   if (data.uid) {
     try { await deleteDoc(companyDoc('users', data.uid)); await deleteDoc(userIndexDoc(data.uid)); } catch (err) {
       await setDoc(companyDoc('users', data.uid), {
@@ -2005,9 +2154,28 @@ function attachEvents() {
   document.querySelectorAll('.auth-tab').forEach(btn => btn.addEventListener('click', () => switchAuthTab(btn.dataset.authTab)));
   $('loginForm').addEventListener('submit', async e => {
     e.preventDefault();
-    try { await login(getValue('loginCompanyCode'), getValue('loginUsername'), getValue('loginPassword')); }
+    try {
+      let companyId = selectedLoginCompanyId();
+      if (!companyId) {
+        const companies = await findCompaniesForUsername(getValue('loginUsername'));
+        renderLoginCompanyResults(companies, getValue('loginUsername'));
+        companyId = selectedLoginCompanyId();
+      }
+      await login(companyId, getValue('loginUsername'), getValue('loginPassword'));
+      try { localStorage.setItem(`multi_login_company_${cleanUsername(getValue('loginUsername'))}`, companyId); } catch {}
+    }
     catch (err) { showMessage($('authMessage'), 'Error al ingresar: ' + err.message, 'danger'); }
   });
+  const btnFindLoginCompanies = $('btnFindLoginCompanies');
+  if (btnFindLoginCompanies) btnFindLoginCompanies.addEventListener('click', () => searchLoginCompanies().catch(err => showMessage($('authMessage'), err.message, 'danger')));
+  const toggleManualLogin = $('toggleManualLogin');
+  if (toggleManualLogin) toggleManualLogin.addEventListener('click', () => {
+    const box = $('loginManualCompanyBox');
+    const visible = box && box.classList.toggle('hidden') === false;
+    toggleManualLogin.textContent = visible ? 'Ocultar ingreso con código' : 'Ingresar con código / soporte';
+  });
+  const loginUsername = $('loginUsername');
+  if (loginUsername) loginUsername.addEventListener('input', () => clearLoginCompanySelection(true));
   $('registerForm').addEventListener('submit', async e => {
     e.preventDefault();
     try {
@@ -2066,6 +2234,14 @@ function attachEvents() {
   $('btnCsv').addEventListener('click', exportCsv);
 
   document.body.addEventListener('click', e => {
+    const loginCompanyBtn = e.target.closest('[data-login-company]');
+    if (loginCompanyBtn) {
+      const companyId = cleanCompanyCode(loginCompanyBtn.dataset.loginCompany || '');
+      if ($('loginSelectedCompanyId')) $('loginSelectedCompanyId').value = companyId;
+      if ($('loginCompanyCode')) $('loginCompanyCode').value = '';
+      document.querySelectorAll('.login-company-option').forEach(btn => btn.classList.toggle('selected', btn === loginCompanyBtn));
+      clearMessage($('authMessage'));
+    }
     const labBtn = e.target.closest('[data-lab-open]');
     if (labBtn) takeLab(labBtn.dataset.labOpen);
     const factorBtn = e.target.closest('[data-factor-edit]');

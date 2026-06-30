@@ -48,6 +48,15 @@ service cloud.firestore {
         && getAfter(companyPath(companyId)).data.ownerAuthEmail == request.auth.token.email;
     }
 
+
+
+    match /loginIndex/{username} {
+      allow get: if true;
+      allow list: if false;
+      allow create, update: if signedIn() && request.resource.data.username == username;
+      allow delete: if signedIn();
+    }
+
     match /userCompanyIndex/{uid} {
       allow get: if isSupport() || (signedIn() && request.auth.uid == uid);
       allow list: if isSupport();

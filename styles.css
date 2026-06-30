@@ -697,3 +697,39 @@ button.support-only[hidden],
 .hidden {
   display: none !important;
 }
+
+/* v1.5 - selector de empresa en login */
+.login-company-results { margin: 10px 0 6px; }
+.login-company-list { display: grid; gap: 8px; margin: 8px 0; }
+.login-company-option {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 14px;
+  padding: 10px 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.login-company-option strong { color: var(--text); font-size: 14px; }
+.login-company-option span { color: var(--muted); font-size: 12px; font-weight: 800; }
+.login-company-option.selected {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  box-shadow: 0 0 0 2px rgba(15, 118, 110, .12);
+}
+.link-button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  text-decoration: underline;
+  padding: 6px 0;
+  cursor: pointer;
+  width: 100%;
+  text-align: center;
+}
+.link-button:hover { color: var(--brand-dark); }

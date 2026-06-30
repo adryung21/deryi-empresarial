@@ -9,7 +9,7 @@
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="favicon.png" />
   <link rel="apple-touch-icon" href="assets/icons/icon-180.png" />
-  <link rel="stylesheet" href="styles.css?v=1.4" />
+  <link rel="stylesheet" href="styles.css?v=1.5" />
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
@@ -26,10 +26,17 @@
         <button type="button" class="auth-tab" data-auth-tab="reset">Restablecer</button>
       </div>
       <form id="loginForm" class="auth-form">
-        <label for="loginCompanyCode">Código de empresa</label>
-        <input id="loginCompanyCode" autocomplete="organization" required placeholder="Ej. farmacia-san-jose-a1b2c3" />
         <label for="loginUsername">Usuario / nickname</label>
         <input id="loginUsername" autocomplete="username" required placeholder="Ej. adrian80" />
+        <button id="btnFindLoginCompanies" type="button" class="btn secondary" style="width:100%; margin-top:8px;">Buscar empresas</button>
+        <input id="loginSelectedCompanyId" type="hidden" />
+        <div id="loginCompanyResults" class="login-company-results"></div>
+        <div id="loginManualCompanyBox" class="hidden">
+          <label for="loginCompanyCode">Código interno de empresa</label>
+          <input id="loginCompanyCode" autocomplete="organization" placeholder="Solo si tu empresa aún no aparece" />
+          <div class="small">Usa este campo solo si tu empresa fue creada antes de esta actualización o para soporte técnico.</div>
+        </div>
+        <button id="toggleManualLogin" type="button" class="link-button">Ingresar con código / soporte</button>
         <label for="loginPassword">Contraseña</label>
         <input id="loginPassword" type="password" autocomplete="current-password" required placeholder="Contraseña" />
         <button type="submit" class="btn dark" style="width:100%; margin-top:12px;">Ingresar</button>
@@ -67,7 +74,7 @@
         <button type="submit" class="btn dark" style="width:100%; margin-top:12px;">Ver indicación</button>
       </form>
       <div id="authMessage" class="notice hidden"></div>
-      <div id="authAppVersion" class="app-version auth-version">Multiempresa v1.4 Usuario - 2026-06-29</div>
+      <div id="authAppVersion" class="app-version auth-version">Multiempresa v1.5 Selector empresa - 2026-06-29</div>
     </div>
   </section>
 
@@ -91,7 +98,7 @@
       <div class="side-bottom">
         <button id="installBtn" class="btn ghost hidden" type="button">Instalar app</button>
         <button id="logoutBtn" class="btn secondary" type="button">Cerrar sesión</button>
-        <div id="sideAppVersion" class="side-version">Multiempresa v1.4 Usuario - 2026-06-29</div>
+        <div id="sideAppVersion" class="side-version">Multiempresa v1.5 Selector empresa - 2026-06-29</div>
       </div>
     </nav>
 
@@ -242,6 +249,6 @@
     </div>
   </div>
 
-  <script type="module" src="app.js?v=1.4"></script>
+  <script type="module" src="app.js?v=1.5"></script>
 </body>
 </html>
