@@ -1,6 +1,6 @@
 # DERYI Empresarial Multiempresa
 
-Versión: Multiempresa v1.6 Documentos - 2026-06-29
+Versión: Multiempresa v1.7 Usuarios documentos - 2026-06-29
 
 ## Cambios principales
 
@@ -35,3 +35,8 @@ Versión: Multiempresa v1.6 Documentos - 2026-06-29
 ## Nota de compatibilidad
 
 Si una empresa fue creada antes de esta versión y todavía no aparece al buscar por usuario, entra una vez usando “Ingresar con código / soporte”. Al ingresar como administrador, la app sincroniza automáticamente los usuarios de esa empresa al nuevo índice de búsqueda.
+
+
+## Cambios v1.7
+- La creación de usuarios ahora solicita nombres, apellidos y documento.
+- El usuario/nickname se genera automáticamente con la misma regla usada para el administrador principal.

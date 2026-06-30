@@ -37,7 +37,7 @@ const getValue = (id, fallback = '') => {
 };
 const nf = new Intl.NumberFormat('es-EC', { maximumFractionDigits: 2 });
 const dtf = new Intl.DateTimeFormat('es-EC', { dateStyle: 'short', timeStyle: 'short' });
-const appVersion = 'Multiempresa v1.6 Documentos - 2026-06-29';
+const appVersion = 'Multiempresa v1.7 Usuarios documentos - 2026-06-29';
 
 let app, auth, db;
 let unsubscribers = [];
@@ -1491,6 +1491,7 @@ function renderUsers() {
             <span class="online-pill ${online ? 'online' : ''}">${online ? 'En línea' : 'Fuera de línea'}</span>
           </div>
           <div class="user-email">Usuario: <strong>${escapeHtml(username)}</strong>${email ? ` · Contacto: ${escapeHtml(email)}` : ''}</div>
+          ${(u.documentType || registered?.documentType || u.documentNumber || registered?.documentNumber) ? `<div class="user-email">Documento: <strong>${escapeHtml(u.documentType || registered?.documentType || '')}</strong> ${escapeHtml(u.documentNumber || registered?.documentNumber || '')}</div>` : ''}
           <div class="user-meta">
             <span class="role-pill ${['admin','owner'].includes(role) ? 'admin' : ''}">${escapeHtml(roleLabel(role))}</span>
             <span class="state-pill ${active ? 'active' : 'inactive'}">${active ? 'Activo' : 'Inactivo'}</span>
@@ -1559,18 +1560,33 @@ function renderAll() {
 }
 
 async function createAllowedUser() {
-  const name = normalizeText(getValue('newUserName'));
-  const username = cleanUsername(getValue('newUserUsername'));
+  const identity = validateAdminIdentity({
+    firstName: getValue('newUserFirstName'),
+    secondName: getValue('newUserSecondName'),
+    paternalSurname: getValue('newUserPaternalSurname'),
+    maternalSurname: getValue('newUserMaternalSurname'),
+    documentType: getValue('newUserDocumentType'),
+    documentNumber: getValue('newUserDocumentNumber')
+  });
+  const name = fullAdminName(identity);
+  const username = await generateAvailableNickname(identity);
   const contactEmail = normalizeText(getValue('newUserEmail')).toLowerCase();
   const role = getValue('newUserRole', 'inventariador');
   const color = normalizeColor(getValue('newUserColor', '0'));
-  if (!name || !username || !contactEmail) return showMessage($('userMessage'), 'Ingresa nombre, usuario y correo de contacto.', 'warn');
+  if (!contactEmail) return showMessage($('userMessage'), 'Ingresa el correo de contacto.', 'warn');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) return showMessage($('userMessage'), 'Ingresa un correo de contacto válido.', 'warn');
   const authEmail = internalAuthEmail(state.companyId, username);
   const invite = { name, username, email: contactEmail, contactEmail, authEmail, role, color };
   const invitationUrl = createAccessUrl(username);
   await setDoc(companyDoc('allowedUsers', username), {
     username,
     name,
+    firstName: identity.firstName,
+    secondName: identity.secondName,
+    paternalSurname: identity.paternalSurname,
+    maternalSurname: identity.maternalSurname,
+    documentType: identity.documentType,
+    documentNumber: identity.documentNumber,
     email: contactEmail,
     contactEmail,
     authEmail,
@@ -1591,14 +1607,18 @@ async function createAllowedUser() {
     appVersion
   }, { merge: true });
   await upsertLoginIndex(username, state.companyId, { companyName: state.company?.name || '', name, role, active: true });
-  $('newUserName').value = '';
-  $('newUserUsername').value = '';
-  $('newUserEmail').value = '';
+  ['newUserFirstName','newUserSecondName','newUserPaternalSurname','newUserMaternalSurname','newUserDocumentNumber','newUserEmail'].forEach(id => { const el = $(id); if (el) el.value = ''; });
+  const typeEl = $('newUserDocumentType');
+  if (typeEl) typeEl.value = 'CEDULA';
+  const preview = $('newUserGeneratedUsernamePreview');
+  if (preview) preview.textContent = 'Usuario generado: complete los 4 campos del nombre.';
   $('newUserColor').value = String((color + 1) % 8);
   const msg = $('userMessage');
   showMessage(msg, `Usuario autorizado: ${username}. Código empresa: ${state.companyId}.`, 'info');
   msg.innerHTML = `
     <strong>Usuario autorizado:</strong> ${escapeHtml(username)}<br>
+    Nombre: <strong>${escapeHtml(name)}</strong><br>
+    Documento: <strong>${escapeHtml(identity.documentType)} ${escapeHtml(identity.documentNumber)}</strong><br>
     Correo de contacto: <strong>${escapeHtml(contactEmail)}</strong><br>
     Código empresa: <strong>${escapeHtml(state.companyId)}</strong><br>
     Enlace Crear acceso: <a href="${escapeHtml(invitationUrl)}" target="_blank" rel="noopener">abrir enlace</a>
@@ -2240,6 +2260,19 @@ function updateGeneratedCompanyUsernamePreview() {
   el.textContent = base ? `Usuario base generado: ${base}` : 'Usuario generado: complete los 4 campos del nombre.';
 }
 
+function updateGeneratedNewUserPreview() {
+  const el = $('newUserGeneratedUsernamePreview');
+  if (!el) return;
+  const identity = {
+    firstName: getValue('newUserFirstName'),
+    secondName: getValue('newUserSecondName'),
+    paternalSurname: getValue('newUserPaternalSurname'),
+    maternalSurname: getValue('newUserMaternalSurname')
+  };
+  const base = generateNicknameBase(identity);
+  el.textContent = base ? `Usuario base generado: ${base}` : 'Usuario generado: complete los 4 campos del nombre.';
+}
+
 function startUserPresence() {
   stopUserPresence();
   updateCurrentUserPresence(true);
@@ -2259,6 +2292,11 @@ function attachEvents() {
     if (node) node.addEventListener('input', updateGeneratedCompanyUsernamePreview);
   });
   updateGeneratedCompanyUsernamePreview();
+  ['newUserFirstName','newUserSecondName','newUserPaternalSurname','newUserMaternalSurname'].forEach(id => {
+    const node = $(id);
+    if (node) node.addEventListener('input', updateGeneratedNewUserPreview);
+  });
+  updateGeneratedNewUserPreview();
   $('loginForm').addEventListener('submit', async e => {
     e.preventDefault();
     try {
