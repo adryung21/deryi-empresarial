@@ -59,3 +59,10 @@ Si una empresa fue creada antes de esta versión y todavía no aparece al buscar
 - Informe PDF en hoja vertical A4.
 - Encabezado profesional con empresa, administrador, usuario inventariador, fechas y archivo base.
 - Tabla ajustada al ancho de hoja y área final para firma del responsable.
+
+
+## Versión v1.9.2 PDF y contraseñas
+- PDF sin marca de agua.
+- Empresa en encabezado grande y en mayúsculas.
+- Confirmación de contraseña en Crear empresa y Crear acceso.
+- Botones para mostrar/ocultar contraseña en Ingresar, Crear empresa y Crear acceso.

@@ -1,9 +1,9 @@
-const CACHE_NAME = 'deryi-empresarial-multiempresa-v1-9-1-pdf-marca-agua';
+const CACHE_NAME = 'deryi-empresarial-multiempresa-v1-9-2-pdf-passwords';
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css?v=1.9.1',
-  './app.js?v=1.9.1',
+  './styles.css?v=1.9.2',
+  './app.js?v=1.9.2',
   './firebase-config.js',
   './manifest.json',
   './favicon.png',

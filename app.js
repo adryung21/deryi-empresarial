@@ -37,7 +37,7 @@ const getValue = (id, fallback = '') => {
 };
 const nf = new Intl.NumberFormat('es-EC', { maximumFractionDigits: 2 });
 const dtf = new Intl.DateTimeFormat('es-EC', { dateStyle: 'short', timeStyle: 'short' });
-const appVersion = 'Multiempresa v1.9.1 PDF marca de agua - 2026-06-30';
+const appVersion = 'Multiempresa v1.9.2 PDF y contraseñas - 2026-06-30';
 
 let app, auth, db;
 let unsubscribers = [];
@@ -2266,42 +2266,6 @@ async function generatePdf() {
   const fechaDocumento = now.toLocaleString('es-EC');
   const archivoBase = state.meta?.fileName || 'Sin archivo registrado';
 
-  async function loadWatermarkDataUrl() {
-    return await new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        try {
-          const canvas = document.createElement('canvas');
-          canvas.width = img.naturalWidth;
-          canvas.height = img.naturalHeight;
-          const ctx = canvas.getContext('2d');
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-          ctx.globalAlpha = 0.5;
-          ctx.drawImage(img, 0, 0);
-          resolve(canvas.toDataURL('image/png'));
-        } catch (err) {
-          resolve(null);
-        }
-      };
-      img.onerror = () => resolve(null);
-      img.src = `assets/logo.png?v=${encodeURIComponent(appVersion)}`;
-    });
-  }
-
-  const watermarkDataUrl = await loadWatermarkDataUrl();
-
-  function drawWatermark(pageNumber = 1) {
-    if (!watermarkDataUrl) return;
-    try {
-      const boxWidth = contentWidth * 0.72;
-      const boxHeight = boxWidth * 0.33;
-      const x = (pageWidth - boxWidth) / 2;
-      const y = pageNumber === 1 ? (pageHeight - boxHeight) / 2 - 6 : (pageHeight - boxHeight) / 2;
-      docPdf.addImage(watermarkDataUrl, 'PNG', x, y, boxWidth, boxHeight, undefined, 'FAST');
-    } catch (err) {
-      // Ignorar si el logo no puede renderizarse en el PDF.
-    }
-  }
 
   function drawFooter(pageNumber, totalPages) {
     docPdf.setDrawColor(226, 232, 240);
@@ -2416,7 +2380,6 @@ async function generatePdf() {
     docPdf.setTextColor(31, 41, 55);
   }
 
-  drawWatermark(1);
   drawMainHeader();
   drawInfoBox();
   drawDatesBox();
@@ -2496,9 +2459,6 @@ async function generatePdf() {
           if (raw === 'Sobrante') data.cell.styles.textColor = [30, 64, 175];
           if (raw === 'Sin diferencia') data.cell.styles.textColor = [21, 128, 61];
         }
-      },
-      willDrawPage: function(data) {
-        if (data.pageNumber > 1) drawWatermark(data.pageNumber);
       }
     });
   }
@@ -2506,7 +2466,6 @@ async function generatePdf() {
   let finalY = docPdf.lastAutoTable?.finalY || 344;
   if (finalY > pageHeight - 145) {
     docPdf.addPage();
-    drawWatermark(docPdf.getNumberOfPages());
     finalY = 90;
   }
   const signY = Math.max(finalY + 34, pageHeight - 128);
@@ -2595,8 +2554,38 @@ function stopUserPresence() {
   userHeartbeatTimer = null;
 }
 
+
+function ensurePasswordsMatch(passwordId, confirmId, label = 'Las contraseñas') {
+  const password = getValue(passwordId);
+  const confirm = getValue(confirmId);
+  if (password !== confirm) {
+    const confirmInput = $(confirmId);
+    if (confirmInput) confirmInput.focus();
+    throw new Error(`${label} no coinciden. Revisa la confirmación.`);
+  }
+  return password;
+}
+
+function setupPasswordToggles() {
+  document.querySelectorAll('[data-password-toggle]').forEach(btn => {
+    if (btn.dataset.bound === '1') return;
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', () => {
+      const ids = String(btn.dataset.passwordToggle || '').split(',').map(v => v.trim()).filter(Boolean);
+      const inputs = ids.map(id => $(id)).filter(Boolean);
+      if (!inputs.length) return;
+      const show = inputs.some(input => input.type === 'password');
+      inputs.forEach(input => { input.type = show ? 'text' : 'password'; });
+      btn.textContent = show ? 'Ocultar' : 'Mostrar';
+      btn.setAttribute('aria-pressed', show ? 'true' : 'false');
+      btn.setAttribute('title', show ? 'Ocultar contraseña' : 'Mostrar contraseña');
+    });
+  });
+}
+
 function attachEvents() {
   setVersionLabels();
+  setupPasswordToggles();
   document.querySelectorAll('.auth-tab').forEach(btn => btn.addEventListener('click', () => switchAuthTab(btn.dataset.authTab)));
   ['companyAdminFirstName','companyAdminSecondName','companyAdminPaternalSurname','companyAdminMaternalSurname'].forEach(id => {
     const node = $(id);
@@ -2635,7 +2624,8 @@ function attachEvents() {
   $('registerForm').addEventListener('submit', async e => {
     e.preventDefault();
     try {
-      await registerUser(getValue('registerUsername'), getValue('registerPassword'), getValue('registerCompanyCode'));
+      const password = ensurePasswordsMatch('registerPassword', 'registerPasswordConfirm', 'Las contraseñas de crear acceso');
+      await registerUser(getValue('registerUsername'), password, getValue('registerCompanyCode'));
       showMessage($('authMessage'), 'Cuenta creada correctamente.', 'info');
     } catch (err) { showMessage($('authMessage'), 'Error al crear cuenta: ' + err.message, 'danger'); }
   });
@@ -2644,6 +2634,7 @@ function attachEvents() {
   if (createCompanyForm) createCompanyForm.addEventListener('submit', async e => {
     e.preventDefault();
     try {
+      const password = ensurePasswordsMatch('companyAdminPassword', 'companyAdminPasswordConfirm', 'Las contraseñas de crear empresa');
       const result = await createCompany(getValue('companyName'), {
         firstName: getValue('companyAdminFirstName'),
         secondName: getValue('companyAdminSecondName'),
@@ -2651,7 +2642,7 @@ function attachEvents() {
         maternalSurname: getValue('companyAdminMaternalSurname'),
         documentType: getValue('companyAdminDocumentType'),
         documentNumber: getValue('companyAdminDocumentNumber')
-      }, getValue('companyAdminEmail'), getValue('companyAdminPassword'));
+      }, getValue('companyAdminEmail'), password);
       showMessage($('authMessage'), `Empresa creada correctamente. Código empresa: ${result.companyId}. Usuario administrador: ${result.username}`, 'info');
     } catch (err) {
       showMessage($('authMessage'), 'Error al crear empresa: ' + err.message, 'danger');

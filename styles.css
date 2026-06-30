@@ -169,6 +169,33 @@ input, select, textarea {
 input:focus, select:focus { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(15,118,110,.13); }
 input[type="file"] { padding: 10px; }
 
+.password-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.password-field input {
+  padding-right: 92px;
+}
+.password-toggle {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 1px solid var(--line);
+  background: #f8fafc;
+  color: var(--brand-dark);
+  border-radius: 999px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+.password-toggle:hover {
+  background: #eef6ff;
+}
+
+
 .btn {
   border: 0;
   background: var(--brand);
