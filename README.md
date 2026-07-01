@@ -61,13 +61,13 @@ Si una empresa fue creada antes de esta versión y todavía no aparece al buscar
 - Tabla ajustada al ancho de hoja y área final para firma del responsable.
 
 
-## Versión v2.0.1 PDF y contraseñas
+## Versión v2.0.2 PDF y contraseñas
 - PDF sin marca de agua.
 - Empresa en encabezado grande y en mayúsculas.
 - Confirmación de contraseña en Crear empresa y Crear acceso.
 - Botones para mostrar/ocultar contraseña en Ingresar, Crear empresa y Crear acceso.
 
-## v2.0.1 Recuperación QR/PDF
+## v2.0.2 Recuperación QR/PDF
 
 Esta versión agrega recuperación de acceso sin correo automático ni dominio propio:
 
@@ -77,3 +77,12 @@ Esta versión agrega recuperación de acceso sin correo automático ni dominio p
 - En la pantalla Restablecer, el usuario puede abrir el QR o escribir el código manualmente, confirmar su documento y crear una nueva contraseña.
 
 Importante: el PDF/QR de recuperación debe guardarse en un lugar seguro. Quien tenga el código puede iniciar el proceso de recuperación para ese usuario.
+
+
+## v2.0.2 QR/PDF y bloqueo duplicados
+
+- Ajusta el PDF de recuperación para separar QR, código e instrucciones.
+- Superpone el logo DERYI al centro del QR cuando el QR está disponible.
+- Limpia formularios del login al cerrar sesión y después de crear empresa.
+- Bloquea doble clic en Crear empresa.
+- Agrega índice de nombre de empresa para evitar duplicados por nombre.

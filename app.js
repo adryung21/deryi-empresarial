@@ -37,7 +37,7 @@ const getValue = (id, fallback = '') => {
 };
 const nf = new Intl.NumberFormat('es-EC', { maximumFractionDigits: 2 });
 const dtf = new Intl.DateTimeFormat('es-EC', { dateStyle: 'short', timeStyle: 'short' });
-const appVersion = 'Multiempresa v2.0.1 QR corregido - 2026-06-30';
+const appVersion = 'Multiempresa v2.0.2 QR/PDF y bloqueo duplicados - 2026-06-30';
 
 let app, auth, db;
 let unsubscribers = [];
@@ -219,10 +219,27 @@ function contactEmailOfCurrentUser() {
   return normalizeText(state.profile?.contactEmail || state.profile?.email || state.user?.email || '').toLowerCase();
 }
 
-function makeCompanyId(companyName, email) {
-  const base = cleanCompanyCode(companyName) || 'empresa';
-  const suffix = hashString(`${companyName}|${email}|${Date.now()}|${Math.random()}`).slice(0, 6);
-  return `${base}-${suffix}`.slice(0, 50);
+function makeCompanySlug(companyName) {
+  return (cleanCompanyCode(companyName) || 'empresa').slice(0, 50);
+}
+
+function makeCompanyId(companyName, email = '') {
+  return makeCompanySlug(companyName);
+}
+
+function companyNameIndexDoc(slug) {
+  return doc(db, 'companyNameIndex', cleanCompanyCode(slug));
+}
+
+async function ensureCompanyNameAvailable(companyName) {
+  const slug = makeCompanySlug(companyName);
+  if (!slug) throw new Error('No se pudo generar el identificador de la empresa.');
+  const snap = await getDoc(companyNameIndexDoc(slug));
+  if (snap.exists()) {
+    const data = snap.data() || {};
+    throw new Error(`Ya existe una empresa registrada con ese nombre: ${data.companyName || companyName}. No se creó un duplicado.`);
+  }
+  return slug;
 }
 
 function companyRootRef(companyId = state.companyId) {
@@ -470,6 +487,33 @@ function switchAuthTab(tab) {
   const resetForm = $('resetForm');
   if (resetForm) resetForm.classList.toggle('hidden', tab !== 'reset');
   clearMessage($('authMessage'));
+}
+
+function resetAuthForms(nextTab = 'login') {
+  document.querySelectorAll('#authPage form').forEach(form => {
+    try { form.reset(); } catch (err) {}
+  });
+  ['loginSelectedCompanyId'].forEach(id => { const el = $(id); if (el) el.value = ''; });
+  ['loginCompanyResults','companyGeneratedUsernamePreview','authMessage'].forEach(id => {
+    const el = $(id);
+    if (!el) return;
+    if (id === 'companyGeneratedUsernamePreview') el.textContent = 'Usuario generado: se mostrará al crear la empresa.';
+    else el.innerHTML = '';
+    if (id !== 'companyGeneratedUsernamePreview') el.classList.add('hidden');
+  });
+  const manual = $('loginManualCompanyBox');
+  if (manual) manual.classList.add('hidden');
+  const toggle = $('toggleManualLogin');
+  if (toggle) toggle.textContent = 'Ingresar con código / soporte';
+  document.querySelectorAll('.password-toggle').forEach(btn => {
+    btn.textContent = 'Mostrar';
+    btn.setAttribute('aria-pressed', 'false');
+    (btn.dataset.passwordToggle || '').split(',').map(v => v.trim()).filter(Boolean).forEach(id => {
+      const input = $(id);
+      if (input) input.type = 'password';
+    });
+  });
+  switchAuthTab(nextTab);
 }
 
 
@@ -772,7 +816,7 @@ async function qrDataUrl(text) {
 
   if (window.QRCode && window.QRCode.toDataURL) {
     try {
-      return await window.QRCode.toDataURL(value, { width: 220, margin: 1, errorCorrectionLevel: 'M' });
+      return await window.QRCode.toDataURL(value, { width: 260, margin: 1, errorCorrectionLevel: 'H' });
     } catch (err) {
       console.warn('No se pudo generar QR con librería local/CDN:', err);
     }
@@ -782,7 +826,7 @@ async function qrDataUrl(text) {
   // una imagen QR externa. Si tampoco funciona, el PDF se genera igual con el
   // código manual escrito en grande.
   try {
-    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=8&data=${encodeURIComponent(value)}`;
+    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=260x260&margin=8&ecc=H&data=${encodeURIComponent(value)}`;
     const response = await fetch(qrUrl, { mode: 'cors', cache: 'no-store' });
     if (response.ok) return await blobToDataUrl(await response.blob());
   } catch (err) {
@@ -792,12 +836,33 @@ async function qrDataUrl(text) {
   return '';
 }
 
+async function loadAssetDataUrl(src) {
+  return await new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth || img.width;
+        canvas.height = img.naturalHeight || img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        resolve(canvas.toDataURL('image/png'));
+      } catch (err) {
+        resolve('');
+      }
+    };
+    img.onerror = () => resolve('');
+    img.src = src;
+  });
+}
+
 async function downloadRecoveryPdf(user, code) {
   if (!window.jspdf || !window.jspdf.jsPDF) throw new Error('No se pudo cargar la librería PDF.');
   const { jsPDF } = window.jspdf;
   const docPdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
   const pageWidth = docPdf.internal.pageSize.getWidth();
   const margin = 38;
+  const contentWidth = pageWidth - margin * 2;
   const companyName = normalizeText(user.companyName || state.company?.name || APP_NAME).toUpperCase();
   const name = normalizeText(user.name || user.username || 'Usuario');
   const username = cleanUsername(user.username || user.id || '');
@@ -813,25 +878,26 @@ async function downloadRecoveryPdf(user, code) {
   } catch (err) {
     console.warn('No se pudo preparar el QR; se generará el PDF con código manual.', err);
   }
+  const logoData = qr ? await loadAssetDataUrl('assets/logo.png') : '';
   const now = new Date().toLocaleString('es-EC');
 
   docPdf.setFillColor(6, 36, 82);
-  docPdf.roundedRect(margin, 32, pageWidth - margin * 2, 62, 10, 10, 'F');
+  docPdf.roundedRect(margin, 32, contentWidth, 66, 10, 10, 'F');
   docPdf.setTextColor(255, 255, 255);
   docPdf.setFont('helvetica', 'bold');
   docPdf.setFontSize(18);
   pdfText(docPdf, 'RECUPERACIÓN DE ACCESO', margin + 18, 62);
   docPdf.setFontSize(11);
-  pdfText(docPdf, companyName, margin + 18, 82);
+  pdfText(docPdf, docPdf.splitTextToSize(companyName, contentWidth - 36), margin + 18, 84);
 
   docPdf.setTextColor(15, 23, 42);
   docPdf.setFontSize(10);
   docPdf.setFont('helvetica', 'normal');
-  pdfText(docPdf, `Emitido: ${now}`, margin, 124);
+  pdfText(docPdf, `Emitido: ${now}`, margin, 126);
 
   docPdf.setDrawColor(203, 213, 225);
   docPdf.setFillColor(248, 250, 252);
-  docPdf.roundedRect(margin, 145, pageWidth - margin * 2, 142, 10, 10, 'FD');
+  docPdf.roundedRect(margin, 145, contentWidth, 142, 10, 10, 'FD');
   docPdf.setFont('helvetica', 'bold');
   docPdf.setFontSize(10);
   pdfText(docPdf, 'Datos del usuario', margin + 16, 170);
@@ -848,54 +914,84 @@ async function downloadRecoveryPdf(user, code) {
     docPdf.setFont('helvetica', 'bold');
     pdfText(docPdf, `${label}:`, margin + 16, y);
     docPdf.setFont('helvetica', 'normal');
-    pdfText(docPdf, String(value || '-'), margin + 132, y);
-    y += 19;
+    const lines = docPdf.splitTextToSize(String(value || '-'), contentWidth - 150);
+    pdfText(docPdf, lines, margin + 132, y);
+    y += Math.max(19, lines.length * 10 + 8);
   });
+
+  const boxY = 310;
+  const boxH = 278;
+  const qrSize = 156;
+  const qrX = pageWidth - margin - qrSize - 18;
+  const qrY = boxY + 42;
+  const leftX = margin + 16;
+  const leftW = qrX - leftX - 24;
 
   docPdf.setFillColor(239, 246, 255);
   docPdf.setDrawColor(147, 197, 253);
-  docPdf.roundedRect(margin, 310, pageWidth - margin * 2, 250, 10, 10, 'FD');
+  docPdf.roundedRect(margin, boxY, contentWidth, boxH, 10, 10, 'FD');
   docPdf.setFont('helvetica', 'bold');
   docPdf.setFontSize(12);
-  pdfText(docPdf, 'Código de recuperación', margin + 16, 338);
-  docPdf.setFontSize(16);
-  pdfText(docPdf, token, margin + 16, 370);
+  docPdf.setTextColor(15, 23, 42);
+  pdfText(docPdf, 'Código de recuperación', leftX, boxY + 28);
+  docPdf.setFontSize(15);
+  pdfText(docPdf, docPdf.splitTextToSize(token, leftW), leftX, boxY + 58);
+
   if (qr) {
-    docPdf.addImage(qr, 'PNG', pageWidth - margin - 170, 330, 150, 150);
+    docPdf.setFillColor(255, 255, 255);
+    docPdf.setDrawColor(203, 213, 225);
+    docPdf.roundedRect(qrX - 8, qrY - 8, qrSize + 16, qrSize + 16, 10, 10, 'FD');
+    docPdf.addImage(qr, 'PNG', qrX, qrY, qrSize, qrSize);
+    if (logoData) {
+      const logoW = 52;
+      const logoH = 27;
+      const logoX = qrX + (qrSize - logoW) / 2;
+      const logoY = qrY + (qrSize - logoH) / 2;
+      docPdf.setFillColor(255, 255, 255);
+      docPdf.roundedRect(logoX - 5, logoY - 5, logoW + 10, logoH + 10, 6, 6, 'F');
+      docPdf.addImage(logoData, 'PNG', logoX, logoY, logoW, logoH, undefined, 'FAST');
+    }
+    docPdf.setFont('helvetica', 'normal');
+    docPdf.setFontSize(7.2);
+    docPdf.setTextColor(71, 85, 105);
+    pdfText(docPdf, 'Escanea este QR desde Restablecer.', qrX + qrSize / 2, qrY + qrSize + 22, { align: 'center' });
   } else {
     docPdf.setDrawColor(148, 163, 184);
     docPdf.setFillColor(255, 255, 255);
-    docPdf.roundedRect(pageWidth - margin - 170, 330, 150, 150, 8, 8, 'FD');
+    docPdf.roundedRect(qrX - 8, qrY - 8, qrSize + 16, qrSize + 16, 8, 8, 'FD');
     docPdf.setFont('helvetica', 'bold');
     docPdf.setFontSize(9);
     docPdf.setTextColor(51, 65, 85);
-    pdfText(docPdf, 'QR no disponible', pageWidth - margin - 95, 388, { align: 'center' });
+    pdfText(docPdf, 'QR no disponible', qrX + qrSize / 2, qrY + 66, { align: 'center' });
     docPdf.setFont('helvetica', 'normal');
     docPdf.setFontSize(7.5);
-    pdfText(docPdf, docPdf.splitTextToSize('Use el código escrito manualmente para recuperar el acceso.', 122), pageWidth - margin - 95, 407, { align: 'center' });
+    pdfText(docPdf, docPdf.splitTextToSize('Use el código escrito manualmente para recuperar el acceso.', 124), qrX + qrSize / 2, qrY + 87, { align: 'center' });
     docPdf.setTextColor(15, 23, 42);
   }
+
   docPdf.setFont('helvetica', 'normal');
-  docPdf.setFontSize(8.5);
+  docPdf.setFontSize(8.4);
+  docPdf.setTextColor(30, 41, 59);
   const instructions = [
     'Guarda este documento en un lugar seguro. Este código permite crear una nueva contraseña para este usuario.',
     'Para recuperar el acceso, abre la app, entra en Restablecer y escanea el QR o escribe el código manualmente.',
     'Después de usarlo, el código queda invalidado. El administrador puede generar uno nuevo desde Usuarios.'
   ];
-  let iy = 402;
+  let iy = boxY + 100;
   instructions.forEach(line => {
-    const wrapped = docPdf.splitTextToSize(line, pageWidth - margin * 2 - 210);
-    pdfText(docPdf, wrapped, margin + 16, iy);
-    iy += wrapped.length * 11 + 4;
+    const wrapped = docPdf.splitTextToSize(line, leftW);
+    pdfText(docPdf, wrapped, leftX, iy);
+    iy += wrapped.length * 11 + 6;
   });
 
   docPdf.setDrawColor(148, 163, 184);
-  docPdf.line(margin + 30, 650, pageWidth / 2 - 24, 650);
-  docPdf.line(pageWidth / 2 + 24, 650, pageWidth - margin - 30, 650);
+  docPdf.line(margin + 30, 660, pageWidth / 2 - 24, 660);
+  docPdf.line(pageWidth / 2 + 24, 660, pageWidth - margin - 30, 660);
   docPdf.setFont('helvetica', 'bold');
   docPdf.setFontSize(8);
-  pdfText(docPdf, 'Firma usuario', pageWidth / 4 + 2, 667, { align: 'center' });
-  pdfText(docPdf, 'Firma administrador', pageWidth * 0.75 - 2, 667, { align: 'center' });
+  docPdf.setTextColor(51, 65, 85);
+  pdfText(docPdf, 'Firma usuario', pageWidth / 4 + 2, 677, { align: 'center' });
+  pdfText(docPdf, 'Firma administrador', pageWidth * 0.75 - 2, 677, { align: 'center' });
   docPdf.setFont('helvetica', 'normal');
   docPdf.setFontSize(7);
   docPdf.setTextColor(100, 116, 139);
@@ -1059,13 +1155,13 @@ function applyAuthQueryParams() {
 
 async function createCompany(companyName, adminData, contactEmail, password) {
   const name = normalizeText(companyName);
+  const companyId = await ensureCompanyNameAvailable(name);
   const identity = validateAdminIdentity(adminData || {});
   const ownerName = fullAdminName(identity);
   const username = await generateAvailableNickname(identity);
   const contact = normalizeText(contactEmail).toLowerCase();
   if (!name || !ownerName || !username || !contact || !password) throw new Error('Completa empresa, datos del administrador, documento, correo de contacto y contraseña.');
   if (password.length < 6) throw new Error('La contraseña debe tener mínimo 6 caracteres.');
-  const companyId = makeCompanyId(name, contact);
   const authEmail = internalAuthEmail(companyId, username);
   pendingAuthSetup = true;
   try {
@@ -1101,9 +1197,23 @@ async function createCompany(companyName, adminData, contactEmail, password) {
     const recovery = await buildRecoveryRecord({ ...profile, uid: cred.user.uid, documentNumber: identity.documentNumber, documentType: identity.documentType }, null, { createdByUid: cred.user.uid, createdByEmail: contact });
     const batch = writeBatch(db);
     batch.set(recoveryTokenDoc(recovery.hash), recovery.data, { merge: true });
+    batch.set(companyNameIndexDoc(companyId), {
+      companyId,
+      companyName: name,
+      companySlug: companyId,
+      ownerUid: cred.user.uid,
+      ownerUsername: username,
+      ownerContactEmail: contact,
+      active: true,
+      createdAt: serverTimestamp(),
+      createdAtMs: now,
+      appVersion
+    });
     batch.set(doc(db, 'companies', companyId), {
       companyId,
       name,
+      companySlug: companyId,
+      normalizedName: normalizeKey(name),
       ownerUid: cred.user.uid,
       ownerUsername: username,
       ownerAuthEmail: authEmail,
@@ -3093,7 +3203,10 @@ function attachEvents() {
   const createCompanyForm = $('createCompanyForm');
   if (createCompanyForm) createCompanyForm.addEventListener('submit', async e => {
     e.preventDefault();
+    const submitBtn = createCompanyForm.querySelector('button[type="submit"]');
+    if (submitBtn?.disabled) return;
     try {
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Creando empresa...'; }
       const password = ensurePasswordsMatch('companyAdminPassword', 'companyAdminPasswordConfirm', 'Las contraseñas de crear empresa');
       const result = await createCompany(getValue('companyName'), {
         firstName: getValue('companyAdminFirstName'),
@@ -3104,11 +3217,14 @@ function attachEvents() {
         documentNumber: getValue('companyAdminDocumentNumber')
       }, getValue('companyAdminEmail'), password);
       showMessage($('authMessage'), `Empresa creada correctamente. Código empresa: ${result.companyId}. Usuario administrador: ${result.username}`, 'info');
+      resetAuthForms('login');
       if (result.recoveryCode && result.recoveryUser) {
         setTimeout(() => downloadRecoveryPdf(result.recoveryUser, result.recoveryCode).catch(err => console.warn('No se pudo descargar PDF recuperación', err)), 600);
       }
     } catch (err) {
       showMessage($('authMessage'), 'Error al crear empresa: ' + err.message, 'danger');
+    } finally {
+      if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Crear empresa'; }
     }
   });
 
@@ -3136,7 +3252,13 @@ function attachEvents() {
     setSectionCollapsed(btn.dataset.toggleSection, !target.classList.contains('collapsed'));
   }));
 
-  $('logoutBtn').addEventListener('click', async () => { await releaseActiveLab(); await updateCurrentUserPresence(false); stopUserPresence(); await signOut(auth); });
+  $('logoutBtn').addEventListener('click', async () => {
+    await releaseActiveLab();
+    await updateCurrentUserPresence(false);
+    stopUserPresence();
+    resetAuthForms('login');
+    await signOut(auth);
+  });
   $('btnLoadFile').addEventListener('click', loadFile);
   $('btnRefreshCloud').addEventListener('click', renderAll);
   $('btnCreateUser').addEventListener('click', () => createAllowedUser().catch(err => showMessage($('userMessage'), err.message, 'danger')));
@@ -3290,7 +3412,7 @@ function authReady() {
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', async () => {
     try {
-      const registration = await navigator.serviceWorker.register('./sw.js?v=1.6');
+      const registration = await navigator.serviceWorker.register('./sw.js?v=2.0.2');
       registration.update?.();
       if (registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' });
       registration.addEventListener('updatefound', () => {
@@ -3303,8 +3425,8 @@ if ('serviceWorker' in navigator) {
         });
       });
       navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (!sessionStorage.getItem('swReloadedV18')) {
-          sessionStorage.setItem('swReloadedV18', '1');
+        if (!sessionStorage.getItem('swReloadedV202')) {
+          sessionStorage.setItem('swReloadedV202', '1');
           window.location.reload();
         }
       });
