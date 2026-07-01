@@ -88,7 +88,7 @@ Importante: el PDF/QR de recuperación debe guardarse en un lugar seguro. Quien 
 - Agrega índice de nombre de empresa para evitar duplicados por nombre.
 
 
-## v2.0.3 QR camara/PDF corregido
+## v2.0.4 QR camara/PDF corregido
 - Ajuste del PDF de recuperacion para evitar textos montados junto al QR.
 - QR centrado con el logo de la aplicacion en el centro.
 - Boton para escanear QR con la camara en la pantalla Restablecer.
