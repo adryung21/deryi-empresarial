@@ -1,9 +1,9 @@
-const CACHE_NAME = 'deryi-empresarial-multiempresa-v2-0-recuperacion-qr-pdf';
+const CACHE_NAME = 'deryi-empresarial-multiempresa-v2-0-1-qr-corregido';
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css?v=2.0',
-  './app.js?v=2.0',
+  './styles.css?v=2.0.1',
+  './app.js?v=2.0.1',
   './firebase-config.js',
   './manifest.json',
   './favicon.png',

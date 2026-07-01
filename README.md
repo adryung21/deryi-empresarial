@@ -61,13 +61,13 @@ Si una empresa fue creada antes de esta versión y todavía no aparece al buscar
 - Tabla ajustada al ancho de hoja y área final para firma del responsable.
 
 
-## Versión v2.0 PDF y contraseñas
+## Versión v2.0.1 PDF y contraseñas
 - PDF sin marca de agua.
 - Empresa en encabezado grande y en mayúsculas.
 - Confirmación de contraseña en Crear empresa y Crear acceso.
 - Botones para mostrar/ocultar contraseña en Ingresar, Crear empresa y Crear acceso.
 
-## v2.0 Recuperación QR/PDF
+## v2.0.1 Recuperación QR/PDF
 
 Esta versión agrega recuperación de acceso sin correo automático ni dominio propio:
 

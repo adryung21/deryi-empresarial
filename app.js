@@ -37,7 +37,7 @@ const getValue = (id, fallback = '') => {
 };
 const nf = new Intl.NumberFormat('es-EC', { maximumFractionDigits: 2 });
 const dtf = new Intl.DateTimeFormat('es-EC', { dateStyle: 'short', timeStyle: 'short' });
-const appVersion = 'Multiempresa v2.0 Recuperación QR/PDF - 2026-06-30';
+const appVersion = 'Multiempresa v2.0.1 QR corregido - 2026-06-30';
 
 let app, auth, db;
 let unsubscribers = [];
@@ -757,9 +757,39 @@ async function createRecoveryForUser(user, options = {}) {
   return record;
 }
 
+async function blobToDataUrl(blob) {
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
 async function qrDataUrl(text) {
-  if (!window.QRCode || !window.QRCode.toDataURL) throw new Error('No se pudo cargar la librería QR. Revisa internet y vuelve a abrir la app.');
-  return await window.QRCode.toDataURL(text, { width: 220, margin: 1, errorCorrectionLevel: 'M' });
+  const value = String(text || '').trim();
+  if (!value) return '';
+
+  if (window.QRCode && window.QRCode.toDataURL) {
+    try {
+      return await window.QRCode.toDataURL(value, { width: 220, margin: 1, errorCorrectionLevel: 'M' });
+    } catch (err) {
+      console.warn('No se pudo generar QR con librería local/CDN:', err);
+    }
+  }
+
+  // Respaldo: si la librería QR no carga en el navegador, intentamos obtener
+  // una imagen QR externa. Si tampoco funciona, el PDF se genera igual con el
+  // código manual escrito en grande.
+  try {
+    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=8&data=${encodeURIComponent(value)}`;
+    const response = await fetch(qrUrl, { mode: 'cors', cache: 'no-store' });
+    if (response.ok) return await blobToDataUrl(await response.blob());
+  } catch (err) {
+    console.warn('No se pudo generar QR por respaldo externo:', err);
+  }
+
+  return '';
 }
 
 async function downloadRecoveryPdf(user, code) {
@@ -777,7 +807,12 @@ async function downloadRecoveryPdf(user, code) {
   const docHint = maskDocument(user.documentNumber || user.documentHint || '');
   const token = prettyRecoveryCode(code);
   const link = recoveryUrl(token);
-  const qr = await qrDataUrl(link);
+  let qr = '';
+  try {
+    qr = await qrDataUrl(link);
+  } catch (err) {
+    console.warn('No se pudo preparar el QR; se generará el PDF con código manual.', err);
+  }
   const now = new Date().toLocaleString('es-EC');
 
   docPdf.setFillColor(6, 36, 82);
@@ -825,7 +860,21 @@ async function downloadRecoveryPdf(user, code) {
   pdfText(docPdf, 'Código de recuperación', margin + 16, 338);
   docPdf.setFontSize(16);
   pdfText(docPdf, token, margin + 16, 370);
-  docPdf.addImage(qr, 'PNG', pageWidth - margin - 170, 330, 150, 150);
+  if (qr) {
+    docPdf.addImage(qr, 'PNG', pageWidth - margin - 170, 330, 150, 150);
+  } else {
+    docPdf.setDrawColor(148, 163, 184);
+    docPdf.setFillColor(255, 255, 255);
+    docPdf.roundedRect(pageWidth - margin - 170, 330, 150, 150, 8, 8, 'FD');
+    docPdf.setFont('helvetica', 'bold');
+    docPdf.setFontSize(9);
+    docPdf.setTextColor(51, 65, 85);
+    pdfText(docPdf, 'QR no disponible', pageWidth - margin - 95, 388, { align: 'center' });
+    docPdf.setFont('helvetica', 'normal');
+    docPdf.setFontSize(7.5);
+    pdfText(docPdf, docPdf.splitTextToSize('Use el código escrito manualmente para recuperar el acceso.', 122), pageWidth - margin - 95, 407, { align: 'center' });
+    docPdf.setTextColor(15, 23, 42);
+  }
   docPdf.setFont('helvetica', 'normal');
   docPdf.setFontSize(8.5);
   const instructions = [
