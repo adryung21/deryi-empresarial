@@ -1,9 +1,9 @@
-const CACHE_NAME = 'deryi-empresarial-multiempresa-v2-0-5-auth-interno-unico';
+const CACHE_NAME = 'deryi-empresarial-multiempresa-v2-0-6-login-estable-auth-reutilizable';
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css?v=2.0.5',
-  './app.js?v=2.0.5',
+  './styles.css?v=2.0.6',
+  './app.js?v=2.0.6',
   './firebase-config.js',
   './manifest.json',
   './favicon.png',

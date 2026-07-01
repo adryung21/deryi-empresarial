@@ -88,12 +88,12 @@ Importante: el PDF/QR de recuperación debe guardarse en un lugar seguro. Quien 
 - Agrega índice de nombre de empresa para evitar duplicados por nombre.
 
 
-## v2.0.5 QR camara/PDF corregido
+## v2.0.6 QR camara/PDF corregido
 - Ajuste del PDF de recuperacion para evitar textos montados junto al QR.
 - QR centrado con el logo de la aplicacion en el centro.
 - Boton para escanear QR con la camara en la pantalla Restablecer.
 
 
-## v2.0.5 - Corrección auth/email-already-in-use
+## v2.0.6 - Corrección auth/email-already-in-use
 
 Esta versión evita que Firebase Authentication bloquee la recreación de una empresa/usuario cuando se borró Firestore pero quedaron cuentas antiguas en Authentication. Ahora las cuentas técnicas internas se crean con un identificador único y el inicio de sesión usa el índice guardado en Firestore.

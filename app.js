@@ -37,7 +37,7 @@ const getValue = (id, fallback = '') => {
 };
 const nf = new Intl.NumberFormat('es-EC', { maximumFractionDigits: 2 });
 const dtf = new Intl.DateTimeFormat('es-EC', { dateStyle: 'short', timeStyle: 'short' });
-const appVersion = 'Multiempresa v2.0.5 Auth interno único - 2026-06-30';
+const appVersion = 'Multiempresa v2.0.6 Login estable/Auth reutilizable - 2026-06-30';
 
 let app, auth, db;
 let unsubscribers = [];
@@ -635,34 +635,75 @@ async function searchLoginCompanies() {
   if (companies.length) clearMessage($('authMessage'));
 }
 
-async function authEmailForLogin(companyId, username) {
+async function authEmailCandidatesForLogin(companyId, username) {
   const code = cleanCompanyCode(companyId);
   const user = cleanUsername(username);
+  const candidates = [];
+  const addCandidate = value => {
+    const email = normalizeText(value).toLowerCase();
+    if (email && !candidates.includes(email)) candidates.push(email);
+  };
   try {
     const snap = await getDoc(loginIndexDoc(user));
     const entry = snap.exists() ? (snap.data().entries || {})[code] : null;
-    const indexedEmail = normalizeText(entry?.authEmail).toLowerCase();
-    if (indexedEmail) return indexedEmail;
+    addCandidate(entry?.authEmail);
   } catch (err) {
     console.warn('No se pudo leer authEmail del índice, usando formato clásico.', err);
   }
-  return internalAuthEmail(code, user);
+  // Formato estable: permite volver a crear la empresa/usuario usando la misma cuenta técnica
+  // que quedó en Firebase Authentication si se borró Firestore durante pruebas.
+  addCandidate(internalAuthEmail(code, user));
+  return candidates;
 }
 
 async function login(companyCode, username, password) {
   const code = cleanCompanyCode(companyCode);
   const user = cleanUsername(username);
   if (!code || !user || !password) throw new Error('Ingresa usuario, selecciona empresa y escribe contraseña.');
-  // Acceso técnico oculto: código "soporte" y correo real como usuario.
-  const authEmail = ['soporte', 'support'].includes(code) && String(username).includes('@')
-    ? normalizeText(username).toLowerCase()
-    : await authEmailForLogin(code, user);
-  await signInWithEmailAndPassword(auth, authEmail, password);
+  if (['soporte', 'support'].includes(code) && String(username).includes('@')) {
+    await signInWithEmailAndPassword(auth, normalizeText(username).toLowerCase(), password);
+    return;
+  }
+  const candidates = await authEmailCandidatesForLogin(code, user);
+  let lastErr = null;
+  for (const authEmail of candidates) {
+    try {
+      await signInWithEmailAndPassword(auth, authEmail, password);
+      return;
+    } catch (err) {
+      lastErr = err;
+      const errCode = String(err?.code || '');
+      if (!['auth/invalid-credential', 'auth/user-not-found', 'auth/wrong-password'].some(c => errCode.includes(c))) throw err;
+    }
+  }
+  throw lastErr || new Error('No se pudo validar el usuario.');
 }
 
 async function sendLoginPasswordReset() {
   throw new Error('Usa el código o QR de recuperación entregado por tu empresa para crear una nueva contraseña.');
 }
+
+async function createOrReuseTechnicalAuthUser(authEmail, password) {
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, authEmail, password);
+    return { cred, reused: false };
+  } catch (err) {
+    if (String(err?.code || '').includes('auth/email-already-in-use')) {
+      try {
+        const cred = await signInWithEmailAndPassword(auth, authEmail, password);
+        return { cred, reused: true };
+      } catch (loginErr) {
+        const code = String(loginErr?.code || '');
+        if (['auth/invalid-credential', 'auth/wrong-password'].some(c => code.includes(c))) {
+          throw new Error('La cuenta técnica ya existe en Firebase Authentication, pero la contraseña no coincide. Usa la contraseña anterior de ese usuario o borra esa cuenta en Authentication > Users para reiniciar desde cero.');
+        }
+        throw loginErr;
+      }
+    }
+    throw err;
+  }
+}
+
 
 function getAppBaseUrl() {
   const base = `${location.origin}${location.pathname}`;
@@ -1294,10 +1335,10 @@ async function createCompany(companyName, adminData, contactEmail, password) {
   const contact = normalizeText(contactEmail).toLowerCase();
   if (!name || !ownerName || !username || !contact || !password) throw new Error('Completa empresa, datos del administrador, documento, correo de contacto y contraseña.');
   if (password.length < 6) throw new Error('La contraseña debe tener mínimo 6 caracteres.');
-  const authEmail = uniqueInternalAuthEmail(companyId, username);
+  const authEmail = internalAuthEmail(companyId, username);
   pendingAuthSetup = true;
   try {
-    const cred = await createUserWithEmailAndPassword(auth, authEmail, password);
+    const { cred } = await createOrReuseTechnicalAuthUser(authEmail, password);
     const now = Date.now();
     const profile = {
       uid: cred.user.uid,
@@ -1432,9 +1473,6 @@ async function createCompany(companyName, adminData, contactEmail, password) {
     return { companyId, username, recoveryCode: recovery.code, recoveryUser: { ...profile, companyName: name, documentNumber: identity.documentNumber, documentType: identity.documentType } };
   } catch (err) {
     pendingAuthSetup = false;
-    if (String(err?.code || '').includes('auth/email-already-in-use')) {
-      throw new Error('La cuenta técnica de este usuario ya existe en Firebase Authentication. Con esta versión se usa un acceso interno único; vuelve a intentar. Si persiste, elimina el usuario anterior desde Authentication > Users.');
-    }
     throw err;
   }
 }
@@ -1445,10 +1483,10 @@ async function registerUser(usernameInput, password, companyCode) {
   if (!companyId) throw new Error('Ingresa el código de empresa que te entregó el administrador.');
   if (!username) throw new Error('Ingresa el usuario/nickname autorizado.');
   if (!password || password.length < 6) throw new Error('La contraseña debe tener mínimo 6 caracteres.');
-  const authEmail = uniqueInternalAuthEmail(companyId, username);
+  const authEmail = internalAuthEmail(companyId, username);
   pendingAuthSetup = true;
   try {
-    const cred = await createUserWithEmailAndPassword(auth, authEmail, password);
+    const { cred } = await createOrReuseTechnicalAuthUser(authEmail, password);
     const allowed = await getAllowedUserForCompany(companyId, username);
     if (!allowed) {
       await signOut(auth);
