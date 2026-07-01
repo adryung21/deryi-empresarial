@@ -772,3 +772,27 @@ button.support-only[hidden],
   padding: 10px 12px;
   text-align: center;
 }
+
+/* v2.0.3 - escaneo QR en recuperación */
+.qr-actions {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 10px;
+}
+.qr-actions .btn {
+  width: 100%;
+}
+.qr-scanner {
+  margin: 10px 0 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #f8fafc;
+}
+.qr-video {
+  width: 100%;
+  max-height: 320px;
+  border-radius: 14px;
+  background: #0f172a;
+  object-fit: cover;
+}

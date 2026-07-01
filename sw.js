@@ -1,9 +1,9 @@
-const CACHE_NAME = 'deryi-empresarial-multiempresa-v2-0-2-qr-pdf-bloqueo-duplicados';
+const CACHE_NAME = 'deryi-empresarial-multiempresa-v2-0-3-qr-camara-pdf-corregido';
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css?v=2.0.2',
-  './app.js?v=2.0.2',
+  './styles.css?v=2.0.3',
+  './app.js?v=2.0.3',
   './firebase-config.js',
   './manifest.json',
   './favicon.png',

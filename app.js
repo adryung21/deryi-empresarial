@@ -37,7 +37,7 @@ const getValue = (id, fallback = '') => {
 };
 const nf = new Intl.NumberFormat('es-EC', { maximumFractionDigits: 2 });
 const dtf = new Intl.DateTimeFormat('es-EC', { dateStyle: 'short', timeStyle: 'short' });
-const appVersion = 'Multiempresa v2.0.2 QR/PDF y bloqueo duplicados - 2026-06-30';
+const appVersion = 'Multiempresa v2.0.3 QR cámara/PDF corregido - 2026-06-30';
 
 let app, auth, db;
 let unsubscribers = [];
@@ -47,6 +47,10 @@ let deferredInstallPrompt = null;
 let pendingAuthSetup = false;
 let factorModalRowId = null;
 const countSaveTimers = new Map();
+let qrScanStream = null;
+let qrScanFrame = null;
+let qrScanActive = false;
+let qrDetector = null;
 
 const state = {
   user: null,
@@ -479,6 +483,7 @@ function clearMessage(el) {
 }
 
 function switchAuthTab(tab) {
+  if (tab !== 'reset') stopRecoveryQrScanner();
   document.querySelectorAll('.auth-tab').forEach(b => b.classList.toggle('active', b.dataset.authTab === tab));
   $('loginForm').classList.toggle('hidden', tab !== 'login');
   $('registerForm').classList.toggle('hidden', tab !== 'register');
@@ -490,6 +495,7 @@ function switchAuthTab(tab) {
 }
 
 function resetAuthForms(nextTab = 'login') {
+  stopRecoveryQrScanner();
   document.querySelectorAll('#authPage form').forEach(form => {
     try { form.reset(); } catch (err) {}
   });
@@ -856,11 +862,13 @@ async function loadAssetDataUrl(src) {
   });
 }
 
+
 async function downloadRecoveryPdf(user, code) {
   if (!window.jspdf || !window.jspdf.jsPDF) throw new Error('No se pudo cargar la librería PDF.');
   const { jsPDF } = window.jspdf;
   const docPdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
   const pageWidth = docPdf.internal.pageSize.getWidth();
+  const pageHeight = docPdf.internal.pageSize.getHeight();
   const margin = 38;
   const contentWidth = pageWidth - margin * 2;
   const companyName = normalizeText(user.companyName || state.company?.name || APP_NAME).toUpperCase();
@@ -881,27 +889,29 @@ async function downloadRecoveryPdf(user, code) {
   const logoData = qr ? await loadAssetDataUrl('assets/logo.png') : '';
   const now = new Date().toLocaleString('es-EC');
 
+  // Encabezado
   docPdf.setFillColor(6, 36, 82);
-  docPdf.roundedRect(margin, 32, contentWidth, 66, 10, 10, 'F');
+  docPdf.roundedRect(margin, 32, contentWidth, 72, 10, 10, 'F');
   docPdf.setTextColor(255, 255, 255);
   docPdf.setFont('helvetica', 'bold');
   docPdf.setFontSize(18);
-  pdfText(docPdf, 'RECUPERACIÓN DE ACCESO', margin + 18, 62);
+  pdfText(docPdf, 'RECUPERACION DE ACCESO', margin + 18, 61);
   docPdf.setFontSize(11);
-  pdfText(docPdf, docPdf.splitTextToSize(companyName, contentWidth - 36), margin + 18, 84);
+  pdfText(docPdf, docPdf.splitTextToSize(companyName, contentWidth - 36), margin + 18, 85);
 
   docPdf.setTextColor(15, 23, 42);
-  docPdf.setFontSize(10);
   docPdf.setFont('helvetica', 'normal');
-  pdfText(docPdf, `Emitido: ${now}`, margin, 126);
+  docPdf.setFontSize(9);
+  pdfText(docPdf, `Emitido: ${now}`, margin, 128);
 
+  // Datos del usuario
   docPdf.setDrawColor(203, 213, 225);
   docPdf.setFillColor(248, 250, 252);
-  docPdf.roundedRect(margin, 145, contentWidth, 142, 10, 10, 'FD');
+  docPdf.roundedRect(margin, 146, contentWidth, 136, 10, 10, 'FD');
   docPdf.setFont('helvetica', 'bold');
-  docPdf.setFontSize(10);
-  pdfText(docPdf, 'Datos del usuario', margin + 16, 170);
-  docPdf.setFont('helvetica', 'normal');
+  docPdf.setFontSize(11);
+  pdfText(docPdf, 'Datos del usuario', margin + 16, 171);
+  docPdf.setFontSize(8.6);
   const rows = [
     ['Nombre', name],
     ['Usuario / nickname', username],
@@ -909,95 +919,114 @@ async function downloadRecoveryPdf(user, code) {
     ['Correo registrado', contact || '-'],
     ['Documento', `${docType} ${docHint}`]
   ];
-  let y = 193;
+  let y = 194;
   rows.forEach(([label, value]) => {
     docPdf.setFont('helvetica', 'bold');
+    docPdf.setTextColor(51, 65, 85);
     pdfText(docPdf, `${label}:`, margin + 16, y);
     docPdf.setFont('helvetica', 'normal');
-    const lines = docPdf.splitTextToSize(String(value || '-'), contentWidth - 150);
-    pdfText(docPdf, lines, margin + 132, y);
-    y += Math.max(19, lines.length * 10 + 8);
+    docPdf.setTextColor(15, 23, 42);
+    const lines = docPdf.splitTextToSize(String(value || '-'), contentWidth - 170);
+    pdfText(docPdf, lines, margin + 145, y);
+    y += Math.max(17, lines.length * 10 + 6);
   });
 
-  const boxY = 310;
-  const boxH = 278;
-  const qrSize = 156;
-  const qrX = pageWidth - margin - qrSize - 18;
-  const qrY = boxY + 42;
-  const leftX = margin + 16;
-  const leftW = qrX - leftX - 24;
-
+  // Area QR / codigo. Diseno vertical para evitar texto montado.
+  const boxY = 306;
+  const boxH = 310;
   docPdf.setFillColor(239, 246, 255);
   docPdf.setDrawColor(147, 197, 253);
   docPdf.roundedRect(margin, boxY, contentWidth, boxH, 10, 10, 'FD');
-  docPdf.setFont('helvetica', 'bold');
-  docPdf.setFontSize(12);
-  docPdf.setTextColor(15, 23, 42);
-  pdfText(docPdf, 'Código de recuperación', leftX, boxY + 28);
-  docPdf.setFontSize(15);
-  pdfText(docPdf, docPdf.splitTextToSize(token, leftW), leftX, boxY + 58);
 
+  docPdf.setFont('helvetica', 'bold');
+  docPdf.setFontSize(13);
+  docPdf.setTextColor(15, 23, 42);
+  pdfText(docPdf, 'Codigo de recuperacion', pageWidth / 2, boxY + 28, { align: 'center' });
+
+  const qrSize = 178;
+  const qrX = (pageWidth - qrSize) / 2;
+  const qrY = boxY + 48;
   if (qr) {
     docPdf.setFillColor(255, 255, 255);
     docPdf.setDrawColor(203, 213, 225);
-    docPdf.roundedRect(qrX - 8, qrY - 8, qrSize + 16, qrSize + 16, 10, 10, 'FD');
+    docPdf.roundedRect(qrX - 10, qrY - 10, qrSize + 20, qrSize + 20, 12, 12, 'FD');
     docPdf.addImage(qr, 'PNG', qrX, qrY, qrSize, qrSize);
+    // Logo de DERYI como unica imagen insertada en el centro del QR.
     if (logoData) {
-      const logoW = 52;
-      const logoH = 27;
+      const logoW = 58;
+      const logoH = 30;
       const logoX = qrX + (qrSize - logoW) / 2;
       const logoY = qrY + (qrSize - logoH) / 2;
       docPdf.setFillColor(255, 255, 255);
-      docPdf.roundedRect(logoX - 5, logoY - 5, logoW + 10, logoH + 10, 6, 6, 'F');
+      docPdf.roundedRect(logoX - 6, logoY - 6, logoW + 12, logoH + 12, 7, 7, 'F');
       docPdf.addImage(logoData, 'PNG', logoX, logoY, logoW, logoH, undefined, 'FAST');
     }
-    docPdf.setFont('helvetica', 'normal');
-    docPdf.setFontSize(7.2);
-    docPdf.setTextColor(71, 85, 105);
-    pdfText(docPdf, 'Escanea este QR desde Restablecer.', qrX + qrSize / 2, qrY + qrSize + 22, { align: 'center' });
   } else {
     docPdf.setDrawColor(148, 163, 184);
     docPdf.setFillColor(255, 255, 255);
-    docPdf.roundedRect(qrX - 8, qrY - 8, qrSize + 16, qrSize + 16, 8, 8, 'FD');
+    docPdf.roundedRect(qrX - 10, qrY - 10, qrSize + 20, qrSize + 20, 12, 12, 'FD');
     docPdf.setFont('helvetica', 'bold');
-    docPdf.setFontSize(9);
+    docPdf.setFontSize(12);
     docPdf.setTextColor(51, 65, 85);
-    pdfText(docPdf, 'QR no disponible', qrX + qrSize / 2, qrY + 66, { align: 'center' });
+    pdfText(docPdf, 'QR no disponible', pageWidth / 2, qrY + 82, { align: 'center' });
     docPdf.setFont('helvetica', 'normal');
-    docPdf.setFontSize(7.5);
-    pdfText(docPdf, docPdf.splitTextToSize('Use el código escrito manualmente para recuperar el acceso.', 124), qrX + qrSize / 2, qrY + 87, { align: 'center' });
-    docPdf.setTextColor(15, 23, 42);
+    docPdf.setFontSize(8.2);
+    pdfText(docPdf, docPdf.splitTextToSize('Use el codigo escrito manualmente para recuperar el acceso.', 150), pageWidth / 2, qrY + 104, { align: 'center' });
   }
 
+  // Codigo manual debajo del QR, nunca al lado.
+  const codeY = qrY + qrSize + 42;
+  docPdf.setFont('helvetica', 'bold');
+  docPdf.setFontSize(8.2);
+  docPdf.setTextColor(71, 85, 105);
+  pdfText(docPdf, 'Codigo manual', pageWidth / 2, codeY - 17, { align: 'center' });
+  docPdf.setFillColor(255, 255, 255);
+  docPdf.setDrawColor(203, 213, 225);
+  docPdf.roundedRect(margin + 62, codeY - 6, contentWidth - 124, 28, 8, 8, 'FD');
+  docPdf.setFont('helvetica', 'bold');
+  docPdf.setFontSize(14);
+  docPdf.setTextColor(6, 36, 82);
+  pdfText(docPdf, token, pageWidth / 2, codeY + 13, { align: 'center' });
+
+  // Instrucciones bajo el bloque QR.
+  const instY = 638;
+  docPdf.setFillColor(255, 251, 235);
+  docPdf.setDrawColor(253, 230, 138);
+  docPdf.roundedRect(margin, instY, contentWidth, 86, 10, 10, 'FD');
+  docPdf.setFont('helvetica', 'bold');
+  docPdf.setFontSize(10);
+  docPdf.setTextColor(120, 53, 15);
+  pdfText(docPdf, 'Instrucciones importantes', margin + 16, instY + 22);
   docPdf.setFont('helvetica', 'normal');
-  docPdf.setFontSize(8.4);
-  docPdf.setTextColor(30, 41, 59);
+  docPdf.setFontSize(8.2);
   const instructions = [
-    'Guarda este documento en un lugar seguro. Este código permite crear una nueva contraseña para este usuario.',
-    'Para recuperar el acceso, abre la app, entra en Restablecer y escanea el QR o escribe el código manualmente.',
-    'Después de usarlo, el código queda invalidado. El administrador puede generar uno nuevo desde Usuarios.'
+    'Guarde este documento en un lugar seguro. El codigo permite crear una nueva contrasena para este usuario.',
+    'Para recuperar acceso, abra la app, entre en Restablecer, escanee el QR o escriba el codigo manualmente.',
+    'Despues de usarlo, el codigo queda invalidado. El administrador puede generar uno nuevo desde Usuarios.'
   ];
-  let iy = boxY + 100;
+  let iy = instY + 39;
   instructions.forEach(line => {
-    const wrapped = docPdf.splitTextToSize(line, leftW);
-    pdfText(docPdf, wrapped, leftX, iy);
-    iy += wrapped.length * 11 + 6;
+    const wrapped = docPdf.splitTextToSize(line, contentWidth - 32);
+    pdfText(docPdf, wrapped, margin + 16, iy);
+    iy += wrapped.length * 10 + 4;
   });
 
+  // Firmas
   docPdf.setDrawColor(148, 163, 184);
-  docPdf.line(margin + 30, 660, pageWidth / 2 - 24, 660);
-  docPdf.line(pageWidth / 2 + 24, 660, pageWidth - margin - 30, 660);
+  docPdf.line(margin + 30, 760, pageWidth / 2 - 24, 760);
+  docPdf.line(pageWidth / 2 + 24, 760, pageWidth - margin - 30, 760);
   docPdf.setFont('helvetica', 'bold');
   docPdf.setFontSize(8);
   docPdf.setTextColor(51, 65, 85);
-  pdfText(docPdf, 'Firma usuario', pageWidth / 4 + 2, 677, { align: 'center' });
-  pdfText(docPdf, 'Firma administrador', pageWidth * 0.75 - 2, 677, { align: 'center' });
+  pdfText(docPdf, 'Firma usuario', pageWidth / 4 + 2, 777, { align: 'center' });
+  pdfText(docPdf, 'Firma administrador', pageWidth * 0.75 - 2, 777, { align: 'center' });
   docPdf.setFont('helvetica', 'normal');
   docPdf.setFontSize(7);
   docPdf.setTextColor(100, 116, 139);
-  pdfText(docPdf, `${APP_NAME} - ${appVersion}`, margin, 810);
+  pdfText(docPdf, `${APP_NAME} - ${appVersion}`, margin, pageHeight - 24);
   docPdf.save(`${safeFileName(companyName)}_recuperacion_${safeFileName(username)}.pdf`);
 }
+
 
 async function validateRecoveryDocument(tokenData, documentNumber) {
   const docInput = normalizeText(documentNumber).toUpperCase();
@@ -1115,6 +1144,100 @@ async function recoverAccessWithCode(codeInput, documentNumber, password) {
     throw err;
   }
 }
+
+function extractRecoveryCodeFromQrText(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return '';
+  try {
+    const url = new URL(raw, location.origin);
+    const token = url.searchParams.get('token') || url.searchParams.get('code') || '';
+    if (token) return prettyRecoveryCode(token);
+  } catch (err) {}
+  const candidate = raw.includes('REC') ? raw.slice(raw.indexOf('REC')) : raw;
+  return prettyRecoveryCode(candidate);
+}
+
+function stopRecoveryQrScanner() {
+  qrScanActive = false;
+  if (qrScanFrame) cancelAnimationFrame(qrScanFrame);
+  qrScanFrame = null;
+  if (qrScanStream) {
+    qrScanStream.getTracks().forEach(track => track.stop());
+    qrScanStream = null;
+  }
+  const video = $('resetQrVideo');
+  if (video) {
+    video.pause?.();
+    video.srcObject = null;
+  }
+  const box = $('resetQrScanner');
+  if (box) box.classList.add('hidden');
+}
+
+async function startRecoveryQrScanner() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error('Este navegador no permite abrir la cámara. Escribe el código manualmente.');
+  }
+  const box = $('resetQrScanner');
+  const video = $('resetQrVideo');
+  const canvas = $('resetQrCanvas');
+  const msg = $('resetQrScanMessage');
+  if (!box || !video || !canvas) throw new Error('No se encontró el lector QR en la pantalla.');
+  stopRecoveryQrScanner();
+  box.classList.remove('hidden');
+  if (msg) msg.textContent = 'Apunta la cámara al QR del PDF de recuperación.';
+
+  qrScanStream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+    audio: false
+  });
+  video.srcObject = qrScanStream;
+  video.setAttribute('playsinline', 'true');
+  await video.play();
+  qrScanActive = true;
+
+  if ('BarcodeDetector' in window && !qrDetector) {
+    try { qrDetector = new BarcodeDetector({ formats: ['qr_code'] }); } catch (err) { qrDetector = null; }
+  }
+
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const scanLoop = async () => {
+    if (!qrScanActive) return;
+    try {
+      let found = '';
+      if (video.readyState >= 2) {
+        if (qrDetector) {
+          const codes = await qrDetector.detect(video);
+          if (codes && codes.length) found = codes[0].rawValue || '';
+        }
+        if (!found && window.jsQR && ctx) {
+          canvas.width = video.videoWidth || 640;
+          canvas.height = video.videoHeight || 480;
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const result = window.jsQR(imageData.data, imageData.width, imageData.height);
+          if (result?.data) found = result.data;
+        }
+      }
+      if (found) {
+        const code = extractRecoveryCodeFromQrText(found);
+        if (code) {
+          const input = $('resetRecoveryCode');
+          if (input) input.value = code;
+          if (msg) msg.textContent = 'QR leído correctamente. Ahora ingresa tu documento y nueva contraseña.';
+          stopRecoveryQrScanner();
+          showMessage($('authMessage'), 'QR leído correctamente. Completa documento y nueva contraseña.', 'info');
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn('No se pudo leer QR en este intento:', err);
+    }
+    qrScanFrame = requestAnimationFrame(scanLoop);
+  };
+  qrScanFrame = requestAnimationFrame(scanLoop);
+}
+
 
 async function copyTextToClipboard(text) {
   if (navigator.clipboard?.writeText) {
@@ -3239,6 +3362,12 @@ function attachEvents() {
       showMessage($('authMessage'), 'Error al recuperar acceso: ' + err.message, 'danger');
     }
   });
+  const btnScanRecoveryQr = $('btnScanRecoveryQr');
+  if (btnScanRecoveryQr) btnScanRecoveryQr.addEventListener('click', () => {
+    startRecoveryQrScanner().catch(err => showMessage($('authMessage'), 'No se pudo abrir la cámara: ' + err.message, 'danger'));
+  });
+  const btnStopRecoveryQr = $('btnStopRecoveryQr');
+  if (btnStopRecoveryQr) btnStopRecoveryQr.addEventListener('click', stopRecoveryQrScanner);
 
   $('sideNavEdge').addEventListener('click', () => setSideMenu(!$('sideNav').classList.contains('open')));
   document.addEventListener('click', e => {
@@ -3412,7 +3541,7 @@ function authReady() {
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', async () => {
     try {
-      const registration = await navigator.serviceWorker.register('./sw.js?v=2.0.2');
+      const registration = await navigator.serviceWorker.register('./sw.js?v=2.0.3');
       registration.update?.();
       if (registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' });
       registration.addEventListener('updatefound', () => {

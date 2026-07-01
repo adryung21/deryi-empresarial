@@ -9,11 +9,12 @@
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="favicon.png" />
   <link rel="apple-touch-icon" href="assets/icons/icon-180.png" />
-  <link rel="stylesheet" href="styles.css?v=2.0.2" />
+  <link rel="stylesheet" href="styles.css?v=2.0.3" />
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 </head>
 <body>
   <section id="authPage" class="auth-page">
@@ -100,6 +101,15 @@
       <form id="resetForm" class="auth-form hidden">
         <div class="notice info">Usa el PDF/QR de recuperación entregado por tu empresa. Escanea el QR con la cámara del celular o escribe el código manualmente.</div>
         <label for="resetRecoveryCode">Código de recuperación</label>
+        <div class="qr-actions">
+          <button id="btnScanRecoveryQr" type="button" class="btn secondary">Escanear QR con cámara</button>
+        </div>
+        <div id="resetQrScanner" class="qr-scanner hidden">
+          <video id="resetQrVideo" class="qr-video" autoplay muted playsinline></video>
+          <canvas id="resetQrCanvas" class="hidden"></canvas>
+          <div id="resetQrScanMessage" class="small">Apunta la cámara al QR del PDF de recuperación.</div>
+          <button id="btnStopRecoveryQr" type="button" class="btn secondary" style="width:100%; margin-top:8px;">Cerrar cámara</button>
+        </div>
         <input id="resetRecoveryCode" autocomplete="one-time-code" placeholder="REC-XXXX-XXXX-XXXX-XXXX" />
         <label for="resetDocumentNumber">Número de documento</label>
         <input id="resetDocumentNumber" inputmode="text" maxlength="13" placeholder="Documento registrado" />
@@ -116,7 +126,7 @@
         <div class="small">El código se puede usar una sola vez. Si no funciona, solicita al administrador que genere un nuevo PDF de recuperación.</div>
       </form>
       <div id="authMessage" class="notice hidden"></div>
-      <div id="authAppVersion" class="app-version auth-version">Multiempresa v2.0.2 QR/PDF y bloqueo duplicados - 2026-06-30</div>
+      <div id="authAppVersion" class="app-version auth-version">Multiempresa v2.0.3 QR cámara/PDF corregido - 2026-06-30</div>
     </div>
   </section>
 
@@ -141,7 +151,7 @@
         <button id="installBtn" class="btn ghost hidden" type="button">Instalar app</button>
         <div id="installNotice" class="install-notice hidden"></div>
         <button id="logoutBtn" class="btn secondary" type="button">Cerrar sesión</button>
-        <div id="sideAppVersion" class="side-version">Multiempresa v2.0.2 QR/PDF y bloqueo duplicados - 2026-06-30</div>
+        <div id="sideAppVersion" class="side-version">Multiempresa v2.0.3 QR cámara/PDF corregido - 2026-06-30</div>
       </div>
     </nav>
 
@@ -297,6 +307,6 @@
     </div>
   </div>
 
-  <script type="module" src="app.js?v=2.0.2"></script>
+  <script type="module" src="app.js?v=2.0.3"></script>
 </body>
 </html>
