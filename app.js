@@ -37,7 +37,7 @@ const getValue = (id, fallback = '') => {
 };
 const nf = new Intl.NumberFormat('es-EC', { maximumFractionDigits: 2 });
 const dtf = new Intl.DateTimeFormat('es-EC', { dateStyle: 'short', timeStyle: 'short' });
-const appVersion = 'Multiempresa v2.0.4 QR icono/PDF y alta usuario - 2026-06-30';
+const appVersion = 'Multiempresa v2.0.5 Auth interno único - 2026-06-30';
 
 let app, auth, db;
 let unsubscribers = [];
@@ -208,6 +208,14 @@ function internalAuthEmail(companyId, username) {
   const company = cleanCompanyCode(companyId).replace(/[^a-z0-9._-]/g, '').slice(0, 28) || 'empresa';
   const user = cleanUsername(username).slice(0, 28) || 'usuario';
   const local = `${company}.${user}`.replace(/\.+/g, '.').replace(/^\.+|\.+$/g, '').slice(0, 63);
+  return `${local}@deryi.local`;
+}
+
+function uniqueInternalAuthEmail(companyId, username) {
+  const company = cleanCompanyCode(companyId).replace(/[^a-z0-9._-]/g, '').slice(0, 22) || 'empresa';
+  const user = cleanUsername(username).slice(0, 22) || 'usuario';
+  const suffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`.replace(/[^a-z0-9]/g, '').slice(0, 14);
+  const local = `${company}.${user}.${suffix}`.replace(/\.+/g, '.').replace(/^\.+|\.+$/g, '').slice(0, 63);
   return `${local}@deryi.local`;
 }
 
@@ -1286,7 +1294,7 @@ async function createCompany(companyName, adminData, contactEmail, password) {
   const contact = normalizeText(contactEmail).toLowerCase();
   if (!name || !ownerName || !username || !contact || !password) throw new Error('Completa empresa, datos del administrador, documento, correo de contacto y contraseña.');
   if (password.length < 6) throw new Error('La contraseña debe tener mínimo 6 caracteres.');
-  const authEmail = internalAuthEmail(companyId, username);
+  const authEmail = uniqueInternalAuthEmail(companyId, username);
   pendingAuthSetup = true;
   try {
     const cred = await createUserWithEmailAndPassword(auth, authEmail, password);
@@ -1424,6 +1432,9 @@ async function createCompany(companyName, adminData, contactEmail, password) {
     return { companyId, username, recoveryCode: recovery.code, recoveryUser: { ...profile, companyName: name, documentNumber: identity.documentNumber, documentType: identity.documentType } };
   } catch (err) {
     pendingAuthSetup = false;
+    if (String(err?.code || '').includes('auth/email-already-in-use')) {
+      throw new Error('La cuenta técnica de este usuario ya existe en Firebase Authentication. Con esta versión se usa un acceso interno único; vuelve a intentar. Si persiste, elimina el usuario anterior desde Authentication > Users.');
+    }
     throw err;
   }
 }
@@ -1434,7 +1445,7 @@ async function registerUser(usernameInput, password, companyCode) {
   if (!companyId) throw new Error('Ingresa el código de empresa que te entregó el administrador.');
   if (!username) throw new Error('Ingresa el usuario/nickname autorizado.');
   if (!password || password.length < 6) throw new Error('La contraseña debe tener mínimo 6 caracteres.');
-  const authEmail = internalAuthEmail(companyId, username);
+  const authEmail = uniqueInternalAuthEmail(companyId, username);
   pendingAuthSetup = true;
   try {
     const cred = await createUserWithEmailAndPassword(auth, authEmail, password);
@@ -1526,6 +1537,9 @@ async function registerUser(usernameInput, password, companyCode) {
     return { companyId, username, recoveryCode: recovery.code, recoveryUser: { ...profile, companyName: company.name || companyId } };
   } catch (err) {
     pendingAuthSetup = false;
+    if (String(err?.code || '').includes('auth/email-already-in-use')) {
+      throw new Error('La cuenta técnica de este usuario ya existe en Firebase Authentication. Con esta versión se usa un acceso interno único; vuelve a intentar. Si persiste, elimina el usuario anterior desde Authentication > Users.');
+    }
     throw err;
   }
 }
