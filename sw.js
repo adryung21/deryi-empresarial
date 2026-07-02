@@ -1,9 +1,9 @@
-const CACHE_NAME = 'deryi-empresarial-multiempresa-v2-0-6-login-estable-auth-reutilizable';
+const CACHE_NAME = 'deryi-empresarial-multiempresa-v2-0-4-qr-icono-pdf-alta-usuario';
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css?v=2.0.6',
-  './app.js?v=2.0.6',
+  './styles.css?v=2.0.4',
+  './app.js?v=2.0.4',
   './firebase-config.js',
   './manifest.json',
   './favicon.png',
